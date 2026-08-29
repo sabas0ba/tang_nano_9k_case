@@ -116,6 +116,24 @@ GitHub Actionsの`Build design artifacts` workflowは、`main`へのpush、Pull 
 
 生成済みファイルはGit管理せず、workflowと生成スクリプトを正本とします。
 
+## GitHub Release
+
+`v<major>.<minor>.<patch>`形式のtagをpushすると、`Publish release` workflowが同じ
+生成・テスト・パッケージ処理を実行し、GitHub Releaseを作成します。
+
+```sh
+git tag -a v1.0.0 -m "v1.0.0"
+git push origin v1.0.0
+```
+
+Release Assetsには`dist/`から次のファイルが登録されます。
+
+- `tang-nano-9k-panel-case-r4.zip`
+- `SHA256SUMS`
+
+`v1.0.0-rc.1`のようにハイフンを含むtagはpre-releaseとして作成されます。同じtagの
+workflowを再実行した場合は、既存Releaseの同名assetsを再生成結果で更新します。
+
 テストは全STLについて、バイナリ形式、境界寸法、有限座標、正の体積、全エッジが
 ちょうど2面に共有される閉じた2-manifoldメッシュであることを確認します。さらに、
 B-Bが基板固定リップと弾性爪、C-CがLCDフックと受け穴、D-DがmicroSD開口、
