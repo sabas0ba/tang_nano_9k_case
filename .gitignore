@@ -1,0 +1,16 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Local generation and visual-inspection workspace
+tmp/
+
+# Generated deliverables (published by GitHub Actions)
+build/
+output/
+dist/
+
+# OS/editor files
+.DS_Store
+*~
+*.swp
