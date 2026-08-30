@@ -183,6 +183,14 @@ M2_THREAD_DEPTH = 6.00
 STANDARD_REAR_CLEARANCE = 5.00
 EXPANDED_REAR_CLEARANCES = (20.00, 30.00)
 
+# Through-slots remove material from the broad, non-load-bearing regions of
+# the rear plate.  The pattern stays outside the PCB carrier, screw bosses,
+# perimeter rim, and connector-stop buttresses.
+REAR_HATCH_SLOT_W = 8.00
+REAR_HATCH_SLOT_H = 6.00
+REAR_HATCH_XS = (7.00, 18.50, 30.00, 73.60, 85.10, 96.60)
+REAR_HATCH_YS = (7.00, 18.00, 29.00, 40.00, 51.00, 62.00)
+
 
 def add_side_with_snap_arms(
     solid: RectilinearSolid,
@@ -428,14 +436,29 @@ def rear_cover(rear_clearance: float = STANDARD_REAR_CLEARANCE) -> RectilinearSo
                       clip_x1, y1, z0 + 0.20)
 
     # Paired end stops take USB-C/HDMI insertion loads instead of transferring
-    # them through the PCB connector solder joints.  They leave the connector
-    # centreline and mounting-hole corners unobstructed.
+    # them through the PCB connector solder joints.  Each stop is carried by a
+    # buttress that overlaps the perimeter rim, so the STL contains one
+    # connected printable part instead of four floating stop bodies.
+    stop_y_ranges = (
+        (board_y - PCB_AXIAL_CLEARANCE - 0.30,
+         board_y - PCB_AXIAL_CLEARANCE),
+        (board_y + PCB_H + PCB_AXIAL_CLEARANCE,
+         board_y + PCB_H + PCB_AXIAL_CLEARANCE + 0.30),
+    )
     for x0, x1 in ((board_x + 4.50, board_x + 7.50),
                    (board_x + 18.50, board_x + 21.50)):
-        solid.add(x0, board_y - PCB_AXIAL_CLEARANCE - 0.30, support_z,
-                  x1, board_y - PCB_AXIAL_CLEARANCE, board_top)
-        solid.add(x0, board_y + PCB_H + PCB_AXIAL_CLEARANCE, support_z,
-                  x1, board_y + PCB_H + PCB_AXIAL_CLEARANCE + 0.30, board_top)
+        lower_y0, lower_y1 = stop_y_ranges[0]
+        upper_y0, upper_y1 = stop_y_ranges[1]
+        solid.add(x0, lower_y0, support_z, x1, lower_y1, board_top)
+        solid.add(x0, upper_y0, support_z, x1, upper_y1, board_top)
+
+        # These supports remain outside the PCB outline.  Their overlap with
+        # the bottom/top rim gives a volumetric union that survives importers
+        # which do not merge bodies that merely share a coplanar face.
+        solid.add(x0, lower_y0, plate_t,
+                  x1, rim_y + rim_t, support_z)
+        solid.add(x0, rim_y + rim_h - rim_t, plate_t,
+                  x1, upper_y1, support_z)
 
     # Tang Nano 9K has two mounting holes at the HDMI end.  Square 1.70 mm
     # pilot bores are intentional: they are printable without circular CSG and
@@ -459,6 +482,17 @@ def rear_cover(rear_clearance: float = STANDARD_REAR_CLEARANCE) -> RectilinearSo
     # provides ventilation. It deliberately avoids the PCB edge rails.
     solid.cut(board_x + 3.50, board_y + 12.0, -0.1,
               board_x + PCB_W - 3.50, board_y + 58.0, plate_t + 0.1)
+
+    # Explicit rear-plate perforations reduce submitted model volume even
+    # when the print service does not expose slicer infill settings.  The
+    # remaining orthogonal webs keep the plate and all integrated features in
+    # one connected component.
+    for hatch_x in REAR_HATCH_XS:
+        for hatch_y in REAR_HATCH_YS:
+            solid.cut(hatch_x, hatch_y, -0.1,
+                      hatch_x + REAR_HATCH_SLOT_W,
+                      hatch_y + REAR_HATCH_SLOT_H,
+                      plate_t + 0.1)
 
     return solid
 

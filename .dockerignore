@@ -1,0 +1,9 @@
+.git
+.direnv
+build
+dist
+output
+result
+tmp
+__pycache__
+*.pyc

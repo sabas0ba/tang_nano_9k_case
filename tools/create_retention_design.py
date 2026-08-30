@@ -17,6 +17,7 @@ from reportlab.pdfgen.canvas import Canvas
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import create_scale_drawing as scale_drawing  # noqa: E402
+from tools.font_paths import dejavu_sans  # noqa: E402
 
 
 PAGE_W, PAGE_H = landscape(A4)
@@ -449,6 +450,7 @@ def page_m2_layout(c: Canvas) -> None:
            "Only the HDMI-end hole pair is used; no USB-C-end mounting holes are assumed")
     x0, y0 = 23.0, 88.0
     rect(c, x0, y0, 111.6, 74.6, fill=PART)
+    scale_drawing.draw_rear_hatches(c, x0, y0)
     bx = x0 + (111.6 - 26.0) / 2.0
     by = y0 + (74.6 - 70.0) / 2.0
     hole_y = by + 70.0 - 2.6
@@ -557,7 +559,7 @@ def page_sections_cd(c: Canvas) -> None:
 
 def create_pdf(output: Path) -> None:
     pdfmetrics.registerFont(TTFont(
-        "DejaVu", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+        "DejaVu", str(dejavu_sans())))
     output.parent.mkdir(parents=True, exist_ok=True)
     c = Canvas(
         str(output), pagesize=landscape(A4), pageCompression=1, invariant=1

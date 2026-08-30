@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import struct
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.platypus import Table, TableStyle
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.font_paths import dejavu_sans
 
 
 BEZEL_W = 118.0
@@ -258,7 +263,7 @@ def create_three_view(output: Path) -> None:
 
 
 def create_pdf(pdf_path: Path, three_view: Path, assembly: Path, exploded: Path) -> None:
-    font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    font_path = dejavu_sans()
     pdfmetrics.registerFont(TTFont("DejaVu", str(font_path)))
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
     page_w, page_h = landscape(A4)

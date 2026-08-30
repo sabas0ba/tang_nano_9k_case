@@ -75,6 +75,11 @@ LCD外周には片側約0.5 mm、PCB外周には片側約0.5 mmの空間があ�
 2.54 mmピンヘッダを実装した基板は、背面カバーの保持レールと干渉する可能性が
 あります。未実装基板を基準にしています。
 
+背面カバーの左右非荷重領域には、材料使用量を抑えるため8.0 x 6.0 mmの貫通スロットを
+格子状に配置しています。外周リム、PCB保持レール、M2ボスおよびコネクタストッパーの
+周囲はソリッドのままです。スライサーで内部充填を指定できる場合も、保持部周辺の強度を
+下げないでください。
+
 ## 推奨印刷条件
 
 - 材料: PETG推奨。PLAを使う場合はスナップ爪の繰返し着脱を避ける
@@ -91,18 +96,31 @@ LCDへ局所的な荷重を掛けないよう、押さえ枠が強く嵌る場�
 
 ## 再生成と検証
 
-STL生成はPython 3.10以降の標準ライブラリだけで実行できます。図面生成には今回の
-検証環境で使用した`numpy 2.3.5`、`matplotlib 3.10.8`、`reportlab 4.4.9`が必要です。
-依存追加や更新は行わず、既存環境のバージョンを使用しています。
+開発環境は`sabas0ba/dotfiles`のcommit
+`fc4cdecc02a6a95c81a259549d3fb9e7df18bb8f`を基準とし、同じnixpkgs revisionを
+`flake.lock`で固定しています。Python、図面生成ライブラリおよびフォントはflakeだけで
+定義し、ホストへパッケージを追加しません。
+
+Nixを利用する場合は、開発シェル内で環境検査と全生成・テストを実行します。
 
 ```sh
-make all
-make test
-make package
+nix develop
+make check
+```
+
+PodmanまたはDockerでは、同じflakeから開発profileを構築します。実行時はネットワークを
+無効化しても生成・テストできます。
+
+```sh
+make container-check
+# Dockerを使用する場合
+make container-check CONTAINER_ENGINE=docker
 ```
 
 `make package`は、STL、レンダリング、三面図、PDF設計書をまとめた決定的ZIPと
 `SHA256SUMS`を`dist/`へ生成します。
+
+環境定義と更新手順は[`docs/development.md`](docs/development.md)に記載しています。
 
 ## CI Artifact
 
@@ -114,7 +132,8 @@ GitHub Actionsの`Build design artifacts` workflowは、`main`へのpush、Pull 
 - `tang-nano-9k-panel-case-r4.zip`: STL、PNG、PDF、設計書、README
 - `SHA256SUMS`: ZIPのSHA-256検証値
 
-生成済みファイルはGit管理せず、workflowと生成スクリプトを正本とします。
+生成済みファイルはGit管理せず、flake、Containerfile、workflowおよび生成スクリプトを
+正本とします。CIもローカルと同じコンテナ内で`make check`を実行します。
 
 ## GitHub Release
 
@@ -135,7 +154,8 @@ Release Assetsには`dist/`から次のファイルが登録されます。
 workflowを再実行した場合は、既存Releaseの同名assetsを再生成結果で更新します。
 
 テストは全STLについて、バイナリ形式、境界寸法、有限座標、正の体積、全エッジが
-ちょうど2面に共有される閉じた2-manifoldメッシュであることを確認します。さらに、
+ちょうど2面に共有される閉じた2-manifoldメッシュであり、単一の連結成分だけを持つことを
+確認します。さらに、
 B-Bが基板固定リップと弾性爪、C-CがLCDフックと受け穴、D-DがmicroSD開口、
 E-EがHDMI側2本のM2ボスを実際に通過することを座標で検証します。
 

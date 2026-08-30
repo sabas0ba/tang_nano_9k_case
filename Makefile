@@ -1,6 +1,14 @@
-.PHONY: all stl visuals scale-drawing design-docs package test clean
+.PHONY: all check env-check stl visuals scale-drawing design-docs package test container-build container-check clean
+
+CONTAINER_ENGINE ?= podman
+CONTAINER_IMAGE ?= tang-nano-9k-case-dev
 
 all: stl visuals scale-drawing design-docs
+
+check: env-check test package
+
+env-check:
+	scripts/check-env.sh
 
 stl:
 	python3 tools/generate_stl.py --output build
@@ -19,6 +27,12 @@ package: all
 
 test:
 	python3 -m unittest discover -s tests -v
+
+container-build:
+	$(CONTAINER_ENGINE) build -f Containerfile -t $(CONTAINER_IMAGE) .
+
+container-check: container-build
+	$(CONTAINER_ENGINE) run --rm --network none -v "$(CURDIR):/project" -w /project $(CONTAINER_IMAGE) make check
 
 clean:
 	rm -f build/*.stl

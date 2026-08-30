@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from collections import Counter
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -70,10 +70,32 @@ class GeneratedMeshes(unittest.TestCase):
             self.assertAlmostEqual(actual, expected, places=4)
 
         edges = Counter()
-        for tri in triangles:
+        edge_owners = defaultdict(list)
+        for triangle_index, tri in enumerate(triangles):
             for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
-                edges[tuple(sorted((key(a), key(b))))] += 1
+                edge = tuple(sorted((key(a), key(b))))
+                edges[edge] += 1
+                edge_owners[edge].append(triangle_index)
         self.assertEqual({count for count in edges.values()}, {2}, "mesh is not 2-manifold")
+
+        # A manifold STL may still contain several closed shells.  Printing
+        # services reject those as multiple parts even when they share one
+        # file, so every print-ready STL must have exactly one shell.
+        visited = {0}
+        pending = deque([0])
+        while pending:
+            triangle_index = pending.popleft()
+            tri = triangles[triangle_index]
+            for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+                edge = tuple(sorted((key(a), key(b))))
+                for neighbour in edge_owners[edge]:
+                    if neighbour not in visited:
+                        visited.add(neighbour)
+                        pending.append(neighbour)
+        self.assertEqual(
+            len(visited), len(triangles),
+            "mesh contains multiple disconnected printable parts",
+        )
 
         signed_volume = 0.0
         for a, b, c in triangles:
@@ -108,6 +130,35 @@ class GeneratedMeshes(unittest.TestCase):
             "rear_cover_clearance_30mm.stl",
             (0.0, 111.6, 0.0, 74.6, 0.0, 34.2),
         )
+
+    def test_rear_cover_stops_are_buttressed_to_the_rim(self):
+        for clearance in (model.STANDARD_REAR_CLEARANCE,
+                          *model.EXPANDED_REAR_CLEARANCES):
+            cover = model.rear_cover(clearance)
+            board_x = (111.60 - model.PCB_W) / 2.0
+            board_y = (74.60 - model.PCB_H) / 2.0
+            support_z = 7.00 + (22.00 + clearance - model.BODY_D)
+            for x in (board_x + 6.00, board_x + 20.00):
+                with self.subTest(clearance=clearance, x=x):
+                    self.assertTrue(cover.contains(x, board_y - 0.40,
+                                                   support_z - 0.50))
+                    self.assertTrue(cover.contains(x, board_y + model.PCB_H + 0.40,
+                                                   support_z - 0.50))
+
+    def test_rear_cover_has_explicit_hatch_cutouts(self):
+        cover = model.rear_cover()
+        for x0 in model.REAR_HATCH_XS:
+            for y0 in model.REAR_HATCH_YS:
+                with self.subTest(x=x0, y=y0):
+                    self.assertFalse(cover.contains(
+                        x0 + model.REAR_HATCH_SLOT_W / 2.0,
+                        y0 + model.REAR_HATCH_SLOT_H / 2.0,
+                        1.00,
+                    ))
+
+        # Webs between adjacent slots and the perimeter frame remain solid.
+        self.assertTrue(cover.contains(16.50, 10.00, 1.00))
+        self.assertTrue(cover.contains(4.00, 10.00, 1.00))
 
     def test_retainer_hook_capture_clearance(self):
         max_step = len(model.RETAINER_HOOK_PROJECTIONS) - 1
