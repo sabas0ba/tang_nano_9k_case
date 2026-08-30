@@ -14,6 +14,7 @@ ARCHIVE_NAME = "tang-nano-9k-panel-case-r4.zip"
 ARCHIVE_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
 ARTIFACT_PATHS = (
     "README.md",
+    "docs/development.md",
     "docs/retention-design.md",
     "build/front_chassis_panel_1p5mm.stl",
     "build/front_chassis_panel_2p0mm.stl",

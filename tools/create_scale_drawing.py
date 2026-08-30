@@ -27,6 +27,8 @@ from tools.assembly_sections import (  # noqa: E402
     mechanical_cells,
     section_by_code,
 )
+from tools import generate_stl as model  # noqa: E402
+from tools.font_paths import dejavu_sans  # noqa: E402
 
 
 # Verified reference dimensions (mm).
@@ -391,8 +393,18 @@ def draw_retainer(c: Canvas, x: float, y: float) -> None:
           6.5, align="center", font="Helvetica")
 
 
+def draw_rear_hatches(c: Canvas, x: float, y: float) -> None:
+    """Draw the through-slot pattern defined by the printable STL source."""
+    for hatch_x in model.REAR_HATCH_XS:
+        for hatch_y in model.REAR_HATCH_YS:
+            rect(c, x + hatch_x, y + hatch_y,
+                 model.REAR_HATCH_SLOT_W, model.REAR_HATCH_SLOT_H,
+                 fill=colors.white, stroke=HIDDEN, width=0.25)
+
+
 def draw_rear_cover(c: Canvas, x: float, y: float, board=False) -> None:
     rect(c, x, y, COVER_W, COVER_H, fill=PART)
+    draw_rear_hatches(c, x, y)
     rim_x = 2.0
     rim_y = 2.0
     rect(c, x + rim_x, y + rim_y, 107.6, 70.6, stroke=HIDDEN, dash=(3, 2))
@@ -737,6 +749,7 @@ def page_10(c: Canvas) -> None:
                 "Rear projection at true 1:1; screw fixation is optional and supplements the snap carrier")
     x0, y0 = 22.0, 82.0
     rect(c, x0, y0, COVER_W, COVER_H, fill=PART)
+    draw_rear_hatches(c, x0, y0)
     board_x = x0 + (COVER_W - BOARD_W) / 2.0
     board_y = y0 + (COVER_H - BOARD_L) / 2.0
     rect(c, board_x + 3.5, board_y + 12.0, BOARD_W - 7.0, 46.0,
@@ -799,7 +812,7 @@ def page_10(c: Canvas) -> None:
 
 
 def create_pdf(output: Path) -> None:
-    pdfmetrics.registerFont(TTFont("DejaVu", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+    pdfmetrics.registerFont(TTFont("DejaVu", str(dejavu_sans())))
     output.parent.mkdir(parents=True, exist_ok=True)
     c = Canvas(
         str(output), pagesize=landscape(A4), pageCompression=1, invariant=1
