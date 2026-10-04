@@ -182,13 +182,12 @@ def draw_exact_section(c: Canvas, p: CaseProfile, code: str, x: float, y: float,
                        clip_h: tuple[float, float] | None = None,
                        clip_z: tuple[float, float] | None = None,
                        show_reference_envelopes: bool = True,
-                       rear_clearance: float = 5.0) -> None:
+                       rear_clearance: float = model.STANDARD_REAR_CLEARANCE) -> None:
     """Draw a section evaluated from the same CSG boxes as the STL files."""
     section = section_by_code(p, code)
     default_h = (0.0, p.bezel_h) if section.plane == "x" else (0.0, p.bezel_w)
     h_min, h_max = clip_h or default_h
-    overall_depth = 22.0 + rear_clearance
-    z_min, z_max = clip_z or (0.0, overall_depth)
+    z_min, z_max = clip_z or (0.0, model.overall_depth(rear_clearance))
 
     assembled = assembly_parts(p, rear_clearance=rear_clearance)
     for part, cells in mechanical_cells(section, assembled):
@@ -220,15 +219,19 @@ def draw_exact_section(c: Canvas, p: CaseProfile, code: str, x: float, y: float,
                           y + (z0 + h + 1.2 - z_min) * scale,
                           text_value, 5.0, color=REFERENCE,
                           align="center", font="Helvetica")
-            # Reference FPC corridor from the LCD rear face toward the PCB.
-            fpc_y = p.lcd_y + 1.075
+            # Reference FPC corridor from the LCD edge that carries the FPC
+            # toward the PCB.
+            if p.lcd.fpc_side == "top":
+                fpc_y, inward = p.lcd_y + p.lcd.height - 1.075, -1.0
+            else:
+                fpc_y, inward = p.lcd_y + 1.075, 1.0
             lcd_rear_z = BEZEL_T + p.lcd.thickness
             polyline(c, (
                 (x + (fpc_y - h_min) * scale, y + (lcd_rear_z - z_min) * scale),
                 (x + (fpc_y - h_min) * scale, y + (12.0 - z_min) * scale),
-                (x + (fpc_y + 16.0 - h_min) * scale, y + (16.0 - z_min) * scale),
+                (x + (fpc_y + inward * 16.0 - h_min) * scale, y + (16.0 - z_min) * scale),
             ), color=FPC, width=0.7, dash=(2, 1))
-            label(c, x + (fpc_y + 8.0 - h_min) * scale,
+            label(c, x + (fpc_y + inward * 8.0 - h_min) * scale,
                   y + (12.8 - z_min) * scale, "FPC ROUTE (REF)", 5.0,
                   color=FPC, font="Helvetica")
         elif code in ("B-B", "C-C"):
@@ -292,9 +295,10 @@ def draw_lcd(c: Canvas, p: CaseProfile, x: float, y: float, with_dims=True) -> N
           6.2, color=HIDDEN, align="center", font="Helvetica")
     # FPC tail location is diagrammatic; width relief is the enclosure value.
     fpc_w = lcd.fpc_x1 - lcd.fpc_x0
-    rect(c, x + lcd.fpc_x0, y - 4.0, fpc_w, 4.0,
+    fpc_y = y + lcd.height if lcd.fpc_side == "top" else y - 4.0
+    rect(c, x + lcd.fpc_x0, fpc_y, fpc_w, 4.0,
          stroke=HIDDEN, fill=colors.HexColor("#fff9c4"), dash=(2, 1))
-    label(c, x + lcd.fpc_x0 + fpc_w / 2, y - 3.2, "FPC", 5.5,
+    label(c, x + lcd.fpc_x0 + fpc_w / 2, fpc_y + 0.8, "FPC", 5.5,
           align="center", font="Helvetica")
     if with_dims:
         dim_h(c, x, x + lcd.width, y - 8.5, y, dim_text(lcd.width))
@@ -467,7 +471,7 @@ def page_2(c: Canvas, p: CaseProfile) -> None:
     dim_h(c, sx, sx + p.bezel_w, sy - 7.0, sy, dim_text(p.bezel_w))
     dim_v(c, sy, sy + BODY_D, sx - 7.0, sx, dim_text(BODY_D))
     label(c, sx + p.bezel_w / 2, sy + BODY_D + 6.0,
-          f"CENTRE SECTION X-Z / OVERALL DEPTH {dim_text(BODY_D)}",
+          f"CENTRE SECTION X-Z / CHASSIS DEPTH {dim_text(BODY_D)}",
           6.5, align="center", font="Helvetica")
     # Panel opening template overlay (separate 1:1 rectangle).
     px, py = 173.0, 20.0
@@ -587,6 +591,7 @@ def page_6(c: Canvas, p: CaseProfile) -> None:
     page_header(c, 6, "Exact assembly sections A-A / B-B",
                 "Solid geometry is evaluated from the STL source; all mechanical sections are true 1:1")
     sections = {section.code: section for section in section_definitions(p)}
+    depth = model.overall_depth(model.STANDARD_REAR_CLEARANCE)
     # A-A: longitudinal Y-Z section.
     ax, ay = 23.0, 126.0
     draw_exact_section(c, p, "A-A", ax, ay)
@@ -594,7 +599,7 @@ def page_6(c: Canvas, p: CaseProfile) -> None:
           f"A-A  Y-Z @ X={sections['A-A'].coordinate:.2f} mm  /  USB-C → HDMI",
           7, align="center", font="Helvetica")
     dim_h(c, ax, ax + p.bezel_h, ay - 8.0, ay, dim_text(p.bezel_h))
-    dim_v(c, ay, ay + BODY_D, ax - 8.0, ax, dim_text(BODY_D))
+    dim_v(c, ay, ay + depth, ax - 8.0, ax, dim_text(depth))
     label(c, 116.0, 162.0, "WHAT THIS CUT PASSES THROUGH", 8)
     notes = (
         "- verified PCB edge-stop at both connector ends",
@@ -615,7 +620,7 @@ def page_6(c: Canvas, p: CaseProfile) -> None:
           f"B-B  X-Z @ Y={sections['B-B'].coordinate:.2f} mm  /  FIXED LIP ← PCB → FLEX CLIP",
           7, align="center", font="Helvetica")
     dim_h(c, bx, bx + p.bezel_w, by - 8.0, by, dim_text(p.bezel_w))
-    dim_v(c, by, by + BODY_D, bx - 8.0, bx, dim_text(BODY_D))
+    dim_v(c, by, by + depth, bx - 8.0, bx, dim_text(depth))
     label(c, 158.0, 73.0, "The PCB is not floating:", 7.2)
     label(c, 158.0, 65.0, "z=18.40 support shelves under both edges", 6.3)
     label(c, 158.0, 58.0, "left fixed lip + right 1.20 mm cantilever clip", 6.3)

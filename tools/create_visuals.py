@@ -44,9 +44,9 @@ WALL = model.WALL
 PCB_W = model.PCB_W
 PCB_H = model.PCB_H
 PCB_T = model.PCB_T
-# The rear cover is recessed into the 27 mm chassis envelope.  Its 2 mm plate
-# occupies z=25..27 after assembly; it does not add another 2 mm externally.
-TOTAL_DEPTH = BODY_D
+# The standard rear-cover plate rests on the chassis rear edge at z=27 and
+# adds its 2 mm thickness to the overall depth.
+TOTAL_DEPTH = model.overall_depth(model.STANDARD_REAR_CLEARANCE)
 
 
 @dataclass
@@ -95,7 +95,7 @@ def assembled_rear_cover(p: CaseProfile, mesh: np.ndarray, extra_z=0.0) -> np.nd
     result = mesh.copy()
     result[:, :, 0] += p.cover_x
     result[:, :, 1] += p.cover_y
-    result[:, :, 2] = BODY_D - result[:, :, 2] + extra_z
+    result[:, :, 2] = TOTAL_DEPTH - result[:, :, 2] + extra_z
     return result
 
 
@@ -105,7 +105,7 @@ def lcd_proxy(p: CaseProfile, z0=BEZEL_T) -> np.ndarray:
                     p.lcd_y + lcd.height, z0 + lcd.thickness)
 
 
-def pcb_proxy(p: CaseProfile, z0=BODY_D - 8.6) -> np.ndarray:
+def pcb_proxy(p: CaseProfile, z0=model.PCB_REAR_Z - PCB_T) -> np.ndarray:
     x0, y0 = p.pcb_x, p.pcb_y
     return box_mesh(x0, y0, z0, x0 + PCB_W, y0 + PCB_H, z0 + PCB_T)
 
@@ -211,13 +211,13 @@ def create_three_view(output: Path, p: CaseProfile) -> None:
     top.add_patch(Rectangle((0, 0), bezel_w, BEZEL_T, fill=False, lw=2.0, color="#263238"))
     top.add_patch(Rectangle((p.body_x, BEZEL_T), p.body_w, BODY_D - BEZEL_T,
                             fill=False, lw=1.7, color="#263238"))
-    top.add_patch(Rectangle((p.cover_x, BODY_D - 2.0), p.cover_w, 2.0,
+    top.add_patch(Rectangle((p.cover_x, BODY_D), p.cover_w, model.COVER_PLATE_T,
                             fill=False, lw=1.7, color="#263238"))
     # HDMI opening on the top wall.
     top.add_patch(Rectangle((bezel_w / 2 - hdmi.half_w, hdmi.z0), hdmi.width, hdmi.height,
                             fill=False, lw=1.2, color="#d84315"))
     dimension_h(top, 0, bezel_w, -8, 0, f"{bezel_w:.1f}")
-    dimension_v(top, 0, TOTAL_DEPTH, -10, 0, "29.0")
+    dimension_v(top, 0, TOTAL_DEPTH, -10, 0, f"{TOTAL_DEPTH:.1f}")
     top.text(bezel_w / 2, hdmi.z1 + 1.1, "HDMI opening", ha="center", color="#d84315", fontsize=8)
     top.set_xlim(-15, bezel_w + 5)
     top.set_ylim(-11, TOTAL_DEPTH + 5)
@@ -227,9 +227,9 @@ def create_three_view(output: Path, p: CaseProfile) -> None:
     side.add_patch(Rectangle((0, 0), BEZEL_T, bezel_h, fill=False, lw=2.0, color="#263238"))
     side.add_patch(Rectangle((BEZEL_T, p.body_y), BODY_D - BEZEL_T, p.body_h,
                              fill=False, lw=1.7, color="#263238"))
-    side.add_patch(Rectangle((BODY_D - 2.0, p.cover_y), 2.0, p.cover_h,
+    side.add_patch(Rectangle((BODY_D, p.cover_y), model.COVER_PLATE_T, p.cover_h,
                              fill=False, lw=1.7, color="#263238"))
-    dimension_h(side, 0, TOTAL_DEPTH, -9, 0, "29.0")
+    dimension_h(side, 0, TOTAL_DEPTH, -9, 0, f"{TOTAL_DEPTH:.1f}")
     dimension_v(side, 0, bezel_h, -11, 0, f"{bezel_h:.1f}")
     side.set_xlim(-16, TOTAL_DEPTH + 6)
     side.set_ylim(-12, bezel_h + 5)
@@ -286,7 +286,8 @@ def create_pdf(pdf_path: Path, p: CaseProfile, three_view: Path, assembly: Path,
             ["Recommended panel cutout",
              f"{dim_text(p.panel_cutout_w)} x {dim_text(p.panel_cutout_h)} mm;"
              " trim after test fit"],
-            ["Overall depth", "27.00 mm; rear cover is recessed"],
+            ["Overall depth",
+             f"{dim_text(TOTAL_DEPTH)} mm; rear cover plate seats on the chassis rear edge"],
             ["Panel clip variants", "1.5 / 2.0 / 3.0 mm panel thickness"],
         ],
         colWidths=[75 * mm, 185 * mm],

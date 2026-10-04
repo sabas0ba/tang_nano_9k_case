@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import itertools
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Iterable, Literal
 
@@ -106,13 +108,13 @@ def assembly_parts(
         dy=profile.retainer_y,
         z_map=lambda value: retainer_z + value,
     )
-    overall_depth = 22.0 + rear_clearance
+    depth = model.overall_depth(rear_clearance)
     cover = transformed(
         model.rear_cover(profile, rear_clearance),
         "assembled-rear-cover",
         dx=profile.cover_x,
         dy=profile.cover_y,
-        z_map=lambda value: overall_depth - value,
+        z_map=lambda value: depth - value,
     )
     return (
         SectionPart("Front chassis", model.front_chassis(profile, panel_t),
@@ -172,3 +174,51 @@ def mechanical_cells(
         (part, section_cells(part.solid, section.plane, section.coordinate))
         for part in parts
     ]
+
+
+@dataclass(frozen=True)
+class Interference:
+    first: str
+    second: str
+    box: model.Box
+
+    @property
+    def thickness(self) -> float:
+        """Smallest overlap extent; contact preloads are only a few 0.01 mm."""
+        return min(self.box.x1 - self.box.x0, self.box.y1 - self.box.y0,
+                   self.box.z1 - self.box.z0)
+
+
+def _bucket_keys(box: model.Box, size: float) -> Iterable[tuple[int, int, int]]:
+    return itertools.product(
+        range(int(box.x0 // size), int(box.x1 // size) + 1),
+        range(int(box.y0 // size), int(box.y1 // size) + 1),
+        range(int(box.z0 // size), int(box.z1 // size) + 1),
+    )
+
+
+def interferences(parts: Iterable[SectionPart],
+                  bucket: float = 4.0) -> list[Interference]:
+    """Return every volumetric overlap between two assembled parts."""
+    cells = {part.name: part.solid.cells() for part in parts}
+    found: list[Interference] = []
+    for first, second in itertools.combinations(cells, 2):
+        index: dict[tuple[int, int, int], list[model.Box]] = defaultdict(list)
+        for box in cells[second]:
+            for key in _bucket_keys(box, bucket):
+                index[key].append(box)
+        seen: set[tuple[model.Box, model.Box]] = set()
+        for a in cells[first]:
+            for key in _bucket_keys(a, bucket):
+                for b in index.get(key, ()):
+                    if (a, b) in seen:
+                        continue
+                    seen.add((a, b))
+                    x0, x1 = max(a.x0, b.x0), min(a.x1, b.x1)
+                    y0, y1 = max(a.y0, b.y0), min(a.y1, b.y1)
+                    z0, z1 = max(a.z0, b.z0), min(a.z1, b.z1)
+                    if x1 - x0 > 1e-6 and y1 - y0 > 1e-6 and z1 - z0 > 1e-6:
+                        found.append(Interference(
+                            first, second, model.Box(x0, y0, z0, x1, y1, z1)
+                        ))
+    return found

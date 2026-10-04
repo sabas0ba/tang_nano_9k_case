@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import generate_stl as model  # noqa: E402
 from tools.assembly_sections import (  # noqa: E402
     assembly_parts,
+    interferences,
     section_cells,
     section_definitions,
 )
@@ -49,7 +50,7 @@ EXPECTED_BOUNDS = {
     "4p3in": {
         "front": (0.0, 118.0, 0.0, 81.0, 0.0, 27.0),
         "retainer": (-0.6, 108.2, 0.0, 70.6, 0.0, 6.5),
-        "cover": (0.0, 111.6, 0.0, 74.6, 0.0, 9.2),
+        "cover": (0.0, 111.6, 0.0, 74.6, 0.0, 11.2),
         "cover_20": (0.0, 111.6, 0.0, 74.6, 0.0, 24.2),
         "cover_30": (0.0, 111.6, 0.0, 74.6, 0.0, 34.2),
     },
@@ -170,7 +171,7 @@ class GeneratedMeshes(unittest.TestCase):
                 cover = model.rear_cover(profile, clearance)
                 board_x = (profile.cover_w - model.PCB_W) / 2.0
                 board_y = (profile.cover_h - model.PCB_H) / 2.0
-                support_z = 7.00 + (22.00 + clearance - model.BODY_D)
+                support_z = 7.00 + model.overall_depth(clearance) - model.BODY_D
                 for x in (board_x + 6.00, board_x + 20.00):
                     with self.subTest(profile=profile.key, clearance=clearance, x=x):
                         self.assertTrue(cover.contains(x, board_y - 0.40,
@@ -248,6 +249,54 @@ class GeneratedMeshes(unittest.TestCase):
                     inner_plate_z = 20.0 + clearance
                     self.assertTrue(cover.contains(*plate_probe, inner_plate_z + 1.0))
                     self.assertFalse(cover.contains(*plate_probe, inner_plate_z - 0.1))
+
+    def test_assembled_parts_do_not_interfere(self):
+        # The rear-cover latch bumps rest 0.05 mm into the lower edge of the
+        # chassis windows as a seating preload.  Anything thicker is a
+        # collision that prevents assembly.
+        for profile in PROFILES.values():
+            for clearance in (model.STANDARD_REAR_CLEARANCE,
+                              *model.EXPANDED_REAR_CLEARANCES):
+                hits = [
+                    hit for hit in interferences(
+                        assembly_parts(profile, rear_clearance=clearance)
+                    )
+                    if hit.thickness > 0.05 + 1e-6
+                ]
+                with self.subTest(profile=profile.key, clearance=clearance):
+                    self.assertEqual(hits, [])
+
+    def test_rear_latch_bumps_sit_in_chassis_windows(self):
+        for profile in PROFILES.values():
+            parts = {part.name: part.solid for part in assembly_parts(profile)}
+            chassis = parts["Front chassis"]
+            cover = parts["Rear cover + carrier"]
+            bump_x = profile.body_x + model.WALL + 0.10
+            for latch_y in profile.rear_latch_ys:
+                y_mid = profile.body_y + latch_y + 3.0
+                with self.subTest(profile=profile.key, latch_y=latch_y):
+                    self.assertTrue(cover.contains(bump_x, y_mid, 24.0))
+                    self.assertFalse(chassis.contains(bump_x, y_mid, 24.0))
+                    for y_edge in (profile.body_y + latch_y + 0.05,
+                                   profile.body_y + latch_y + 5.95):
+                        self.assertTrue(cover.contains(bump_x, y_edge, 24.0))
+
+    def test_rear_cover_seats_on_chassis_rear_edge(self):
+        wall_end = model.BODY_D
+        for profile in PROFILES.values():
+            for clearance in (model.STANDARD_REAR_CLEARANCE,
+                              *model.EXPANDED_REAR_CLEARANCES):
+                parts = {part.name: part.solid for part in assembly_parts(
+                    profile, rear_clearance=clearance
+                )}
+                chassis = parts["Front chassis"]
+                cover = parts["Rear cover + carrier"]
+                # The left wall carries a seat at 20 % of the cover height.
+                x = profile.body_x + 0.50
+                y = profile.cover_y + profile.cover_h * 0.2
+                with self.subTest(profile=profile.key, clearance=clearance):
+                    self.assertTrue(chassis.contains(x, y, wall_end - 0.05))
+                    self.assertTrue(cover.contains(x, y, wall_end + 0.05))
 
     def test_assembly_reference_meshes(self):
         for profile in PROFILES.values():

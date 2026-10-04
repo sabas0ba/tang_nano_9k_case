@@ -70,7 +70,8 @@ class RectilinearSolid:
             inside(box) for box in self.subtractions
         )
 
-    def triangles(self) -> list[tuple[tuple[float, float, float], ...]]:
+    def _occupancy(self):
+        """Evaluate the CSG on the grid formed by all box coordinates."""
         boxes = self.additions + self.subtractions
         if not self.additions:
             raise ValueError(f"{self.name}: no positive geometry")
@@ -94,6 +95,18 @@ class RectilinearSolid:
             occupied.update(cells(box))
         for box in self.subtractions:
             occupied.difference_update(cells(box))
+        return xs, ys, zs, occupied
+
+    def cells(self) -> list[Box]:
+        """Return the evaluated solid as disjoint axis-aligned boxes."""
+        xs, ys, zs, occupied = self._occupancy()
+        return [
+            Box(xs[i], ys[j], zs[k], xs[i + 1], ys[j + 1], zs[k + 1])
+            for i, j, k in sorted(occupied)
+        ]
+
+    def triangles(self) -> list[tuple[tuple[float, float, float], ...]]:
+        xs, ys, zs, occupied = self._occupancy()
 
         tris: list[tuple[tuple[float, float, float], ...]] = []
 
@@ -174,14 +187,30 @@ PCB_MOUNT_HOLE_EDGE_OFFSET = 2.60
 M2_PILOT_SQUARE = 1.70
 M2_BOSS_SIZE = 6.00
 M2_THREAD_DEPTH = 6.00
-STANDARD_REAR_CLEARANCE = 5.00
+# The rear-cover plate rests on the rear end of the chassis walls.  Its inner
+# face is therefore at z=BODY_D for the standard cover, 7.00 mm behind the PCB
+# rear surface.  Deeper covers keep the same seat through perimeter posts.
+PCB_REAR_Z = 20.00
+COVER_PLATE_T = 2.00
+STANDARD_REAR_CLEARANCE = BODY_D - PCB_REAR_Z
 EXPANDED_REAR_CLEARANCES = (20.00, 30.00)
+COVER_SEAT_POST_LENGTH = 6.00
+# Rear-cover PCB end stops, x ranges relative to the PCB left edge.
+PCB_END_STOP_XS = ((4.50, 7.50), (18.50, 21.50))
+PCB_END_STOP_T = 0.30
+# Clearance between a rear-cover feature and the chassis wall pocket around it.
+WALL_POCKET_CLEARANCE = 0.10
 
 # Through-slots remove material from the broad, non-load-bearing regions of
 # the rear plate.  The profile pattern stays outside the PCB carrier, screw
 # bosses, perimeter rim, and connector-stop buttresses.
 REAR_HATCH_SLOT_W = 8.00
 REAR_HATCH_SLOT_H = 6.00
+
+
+def overall_depth(rear_clearance: float) -> float:
+    """Distance from the bezel face to the outer face of the rear cover."""
+    return PCB_REAR_Z + rear_clearance + COVER_PLATE_T
 
 
 def retainer_assembly_z(profile: CaseProfile) -> float:
@@ -300,6 +329,23 @@ def front_chassis(profile: CaseProfile, panel_t: float) -> RectilinearSolid:
         hdmi.z1,
     )
 
+    # The rear-cover end stops sit closer to the wall than the wall inner face
+    # allows.  Shallow pockets, open toward the rear, receive them.
+    stop_outer_y = (
+        profile.pcb_y - PCB_AXIAL_CLEARANCE - PCB_END_STOP_T,
+        profile.pcb_y + PCB_H + PCB_AXIAL_CLEARANCE + PCB_END_STOP_T,
+    )
+    if stop_outer_y[0] - WALL_POCKET_CLEARANCE < body_y + WALL:
+        gap = WALL_POCKET_CLEARANCE
+        for stop_x0, stop_x1 in PCB_END_STOP_XS:
+            x0 = profile.pcb_x + stop_x0 - gap
+            x1 = profile.pcb_x + stop_x1 + gap
+            z0 = PCB_REAR_Z - PCB_T - gap
+            solid.cut(x0, stop_outer_y[0] - gap, z0,
+                      x1, body_y + WALL + 0.1, BODY_D + 0.1)
+            solid.cut(x0, body_y + body_h - WALL - 0.1, z0,
+                      x1, stop_outer_y[1] + gap, BODY_D + 0.1)
+
     # Four windows accept the independent LCD-retainer snap hooks.  The hook
     # centres deliberately avoid the panel-mount flex arms so the two snap
     # systems do not weaken the same wall sections.
@@ -381,17 +427,22 @@ def rear_cover(profile: CaseProfile,
     to the inner face of the rear plate.  Increasing it extends only the rear
     shell and the carrier columns; USB-C, HDMI, LCD, and PCB global positions
     remain identical across variants.
+
+    Cover coordinates start at the outer face of the plate.  Features inside
+    the chassis are positioned from the chassis rear end at cover
+    z=``depth_extension``.
     """
     if rear_clearance < STANDARD_REAR_CLEARANCE:
-        raise ValueError("rear clearance cannot be less than 5 mm")
-    overall_depth = 22.00 + rear_clearance
-    depth_extension = overall_depth - BODY_D
+        raise ValueError(
+            f"rear clearance cannot be less than {STANDARD_REAR_CLEARANCE:.0f} mm"
+        )
+    depth_extension = overall_depth(rear_clearance) - BODY_D
     solid = RectilinearSolid(
         f"rear-cover-pcb-carrier-{rear_clearance:.0f}mm-clearance"
     )
     cover_w = profile.cover_w
     cover_h = profile.cover_h
-    plate_t = 2.00
+    plate_t = COVER_PLATE_T
     rim_w = cover_w - 4.00
     rim_h = cover_h - 4.00
     rim_x = (cover_w - rim_w) / 2.0
@@ -407,11 +458,13 @@ def rear_cover(profile: CaseProfile,
     solid.add(rim_x, rim_y + rim_h - rim_t, plate_t,
               rim_x + rim_w, rim_y + rim_h, rim_hz)
 
-    # Four shallow bumps engage the chassis latch windows.
+    # Four shallow bumps engage the chassis latch windows.  The window
+    # positions are defined from the chassis body edge, so convert them into
+    # cover coordinates instead of measuring from the rim.
     latch_z0 = 2.25 + depth_extension
     latch_z1 = 3.85 + depth_extension
     for latch_y in profile.rear_latch_ys:
-        y0 = rim_y + latch_y
+        y0 = profile.body_y + latch_y - profile.cover_y
         solid.add(rim_x - 0.35, y0, latch_z0,
                   rim_x + 0.35, y0 + 6.0, latch_z1)
         solid.add(rim_x + rim_w - 0.35, y0, latch_z0,
@@ -453,13 +506,13 @@ def rear_cover(profile: CaseProfile,
     # buttress that overlaps the perimeter rim, so the STL contains one
     # connected printable part instead of four floating stop bodies.
     stop_y_ranges = (
-        (board_y - PCB_AXIAL_CLEARANCE - 0.30,
+        (board_y - PCB_AXIAL_CLEARANCE - PCB_END_STOP_T,
          board_y - PCB_AXIAL_CLEARANCE),
         (board_y + PCB_H + PCB_AXIAL_CLEARANCE,
-         board_y + PCB_H + PCB_AXIAL_CLEARANCE + 0.30),
+         board_y + PCB_H + PCB_AXIAL_CLEARANCE + PCB_END_STOP_T),
     )
-    for x0, x1 in ((board_x + 4.50, board_x + 7.50),
-                   (board_x + 18.50, board_x + 21.50)):
+    for stop_x0, stop_x1 in PCB_END_STOP_XS:
+        x0, x1 = board_x + stop_x0, board_x + stop_x1
         lower_y0, lower_y1 = stop_y_ranges[0]
         upper_y0, upper_y1 = stop_y_ranges[1]
         solid.add(x0, lower_y0, support_z, x1, lower_y1, board_top)
@@ -472,6 +525,25 @@ def rear_cover(profile: CaseProfile,
                   x1, rim_y + rim_t, support_z)
         solid.add(x0, rim_y + rim_h - rim_t, plate_t,
                   x1, upper_y1, support_z)
+
+    # Deep covers stand behind the chassis.  Perimeter posts reach forward to
+    # the chassis wall end so every variant has the same positive seat as
+    # the standard cover plate.  Each post overlaps the rim for a volumetric
+    # union.
+    seat_z = depth_extension
+    if seat_z > plate_t:
+        post = COVER_SEAT_POST_LENGTH
+        rim_overlap = rim_t / 2.0
+        for centre_y in (cover_h * 0.2, cover_h * 0.8):
+            y0, y1 = centre_y - post / 2.0, centre_y + post / 2.0
+            solid.add(0.0, y0, plate_t, rim_x + rim_overlap, y1, seat_z)
+            solid.add(cover_w - rim_x - rim_overlap, y0, plate_t,
+                      cover_w, y1, seat_z)
+        for centre_x in (cover_w * 0.2, cover_w * 0.8):
+            x0, x1 = centre_x - post / 2.0, centre_x + post / 2.0
+            solid.add(x0, 0.0, plate_t, x1, rim_y + rim_overlap, seat_z)
+            solid.add(x0, cover_h - rim_y - rim_overlap, plate_t,
+                      x1, cover_h, seat_z)
 
     # Tang Nano 9K has two mounting holes at the HDMI end.  Square 1.70 mm
     # pilot bores are intentional: they are printable without circular CSG and
@@ -565,7 +637,6 @@ def pcb_proxy(profile: CaseProfile) -> RectilinearSolid:
 
 def assembly_reference_triangles(profile: CaseProfile, rear_clearance: float):
     """Return a non-print assembly reference containing five closed shells."""
-    overall_depth = 22.0 + rear_clearance
     triangles = list(front_chassis(profile, 2.0).triangles())
 
     retainer = lcd_retainer(profile).triangles()
@@ -578,7 +649,7 @@ def assembly_reference_triangles(profile: CaseProfile, rear_clearance: float):
 
     triangles.extend(_assembled_cover_triangles(
         rear_cover(profile, rear_clearance).triangles(),
-        overall_depth,
+        overall_depth(rear_clearance),
         profile.cover_x,
         profile.cover_y,
     ))

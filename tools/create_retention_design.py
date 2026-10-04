@@ -324,7 +324,7 @@ def page_assembly(c: Canvas, p: CaseProfile) -> None:
     step_box(c, 14, 108, "1", "PANEL + LCD", (
         "Select the chassis variant matching panel thickness.",
         "Install chassis into the panel cutout.",
-        "Place LCD with FPC toward the bottom relief.",
+        f"Place LCD with FPC toward the {p.lcd.fpc_side} relief.",
     ), PART)
     step_box(c, 155, 108, "2", "LOCK LCD RETAINER", (
         "Align the retainer FPC relief.",
