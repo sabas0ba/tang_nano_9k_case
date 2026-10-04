@@ -33,7 +33,6 @@ PART = colors.HexColor("#eceff1")
 RETAINER = colors.HexColor("#ffe0b2")
 FIXED = colors.HexColor("#ffb74d")
 FLEX = colors.HexColor("#ef9a9a")
-STOP = colors.HexColor("#ce93d8")
 WARN = colors.HexColor("#c62828")
 REFERENCE = colors.HexColor("#ef6c00")
 TOTAL_PAGES = 10
@@ -45,6 +44,7 @@ def u(value: float) -> float:
 
 def label(c: Canvas, x: float, y: float, text: str, size=7.0,
           color=INK, align="left", font="DejaVu") -> None:
+    scale_drawing.text_bounds(c, x, y, text, size, font, align)
     c.saveState()
     c.setFillColor(color)
     c.setFont(font, size)
@@ -56,6 +56,7 @@ def label(c: Canvas, x: float, y: float, text: str, size=7.0,
 
 def line(c: Canvas, x0: float, y0: float, x1: float, y1: float,
          color=INK, width=0.4, dash=None) -> None:
+    scale_drawing.record_bounds(c, x0, y0, x1, y1)
     c.saveState()
     c.setStrokeColor(color)
     c.setLineWidth(width)
@@ -67,6 +68,7 @@ def line(c: Canvas, x0: float, y0: float, x1: float, y1: float,
 
 def rect(c: Canvas, x: float, y: float, w: float, h: float,
          fill=None, stroke=INK, width=0.4, dash=None, radius=0.0) -> None:
+    scale_drawing.record_bounds(c, x, y, x + w, y + h)
     c.saveState()
     c.setStrokeColor(stroke)
     c.setLineWidth(width)
@@ -100,10 +102,15 @@ def paragraph(c: Canvas, x: float, y: float, lines: tuple[str, ...],
 
 
 def header(c: Canvas, p: CaseProfile, page: int, title: str, subtitle: str) -> None:
+    with scale_drawing.unrecorded():
+        _header(c, p, page, title, subtitle)
+
+
+def _header(c: Canvas, p: CaseProfile, page: int, title: str, subtitle: str) -> None:
     rect(c, 7, 7, 283, 196, width=0.55)
     label(c, 12, 195.5, title, 14)
     label(c, 12, 189.5, subtitle, 7.2, MUTED)
-    label(c, 285, 195.5, f"RETENTION DESIGN  REV 4  |  {page}/{TOTAL_PAGES}",
+    label(c, 285, 195.5, f"RETENTION DESIGN  REV 5  |  {page}/{TOTAL_PAGES}",
           7, INK, "right")
     line(c, 7, 185.5, 290, 185.5, INK, 0.55)
     lcd = p.lcd
@@ -154,15 +161,18 @@ def page_overview(c: Canvas, p: CaseProfile) -> None:
     rect(c, x + 2, y - 101, 112, 7, fill=PART)
     label(c, x + 58, y - 98.8, "REAR COVER + PCB CARRIER", 6.2, align="center")
 
-    label(c, 158, 169, "REVISION 4 CONTENT", 9)
+    label(c, 158, 169, "REVISION 5 CONTENT", 9)
+    axial = ("3. Four axial stops resist USB-C and HDMI insertion loads."
+             if p.usb_bulkhead is None else
+             "3. Two rear-cover connector bulkheads resist insertion loads.")
     paragraph(c, 158, 158, (
         "1. LCD retainer snaps directly into chassis at four points.",
-        "2. Rear-cover pressure posts are removed.",
-        "3. PCB uses a fixed guide on one edge and two flex clips on the other.",
-        "4. Four axial stops resist USB-C and HDMI insertion loads.",
-        "5. Rear cover, PCB carrier, LCD retainer, and panel clips are independent.",
+        "2. PCB uses a fixed guide on one edge and two flex clips on the other.",
+        axial,
+        "4. Rear cover, PCB carrier, LCD retainer, and panel clips are independent.",
+        "5. Rear-cover plate seats on the chassis rear edge; latches match windows.",
         "6. Exact STL-derived A-A to E-E assembly sections are included.",
-        "7. HDMI-end two-hole M2 bosses and 20/30 mm deep covers are added.",
+        "7. HDMI-end two-hole M2 bosses and 20/30 mm deep covers are provided.",
     ), 6.7, 7.0)
 
     table(c, 151, 101, (43, 46, 43), (
@@ -245,20 +255,16 @@ def page_lcd(c: Canvas, p: CaseProfile) -> None:
     c.showPage()
 
 
-def draw_board_carrier(c: Canvas, p: CaseProfile, x: float, y: float, scale=1.0) -> None:
-    w, h = p.cover_w * scale, p.cover_h * scale
-    rect(c, x, y, w, h, fill=PART)
-    bx = x + (p.cover_w - 26.0) / 2 * scale
-    by = y + (p.cover_h - 70.0) / 2 * scale
-    bw, bh = 26.0 * scale, 70.0 * scale
-    rect(c, bx, by, bw, bh, fill=PCB, radius=1.5 * scale)
-    for y0, y1 in ((by + 9 * scale, by + 28 * scale),
-                   (by + 42 * scale, by + 61 * scale)):
-        rect(c, bx - 1.0 * scale, y0, 1.8 * scale, y1 - y0, fill=FIXED)
-        rect(c, bx + bw - 0.8 * scale, y0, 2.0 * scale, y1 - y0, fill=FLEX)
-    for sx in (bx + 4.5 * scale, bx + 18.5 * scale):
-        rect(c, sx, by - 0.6 * scale, 3 * scale, 0.6 * scale, fill=STOP)
-        rect(c, sx, by + bh, 3 * scale, 0.6 * scale, fill=STOP)
+def draw_board_carrier(c: Canvas, p: CaseProfile, x: float, y: float) -> None:
+    rect(c, x, y, p.cover_w, p.cover_h, fill=PART)
+    bx = x + (p.cover_w - 26.0) / 2
+    by = y + (p.cover_h - 70.0) / 2
+    bw, bh = 26.0, 70.0
+    rect(c, bx, by, bw, bh, fill=PCB, radius=1.5)
+    for y0, y1 in ((by + 9, by + 28), (by + 42, by + 61)):
+        rect(c, bx - 1.0, y0, 1.8, y1 - y0, fill=FIXED)
+        rect(c, bx + bw - 0.8, y0, 2.0, y1 - y0, fill=FLEX)
+    scale_drawing.draw_end_stops(c, p, bx, by, draw_rect=rect)
     label(c, bx + bw / 2, by + bh + 3, "HDMI", 5.8, align="center")
     label(c, bx + bw / 2, by - 5, "USB-C", 5.8, align="center")
 
@@ -266,7 +272,7 @@ def draw_board_carrier(c: Canvas, p: CaseProfile, x: float, y: float, scale=1.0)
 def page_pcb(c: Canvas, p: CaseProfile) -> None:
     header(c, p, 3, "Tang Nano 9K carrier",
            "Fixed-edge insertion, two snap clips, and axial connector-load stops")
-    draw_board_carrier(c, p, 18, 87, 1.0)
+    draw_board_carrier(c, p, 18, 87)
     label(c, 18, 169, "REAR COVER - INBOARD VIEW", 8)
     label(c, 18, 78, "Orange: fixed guide | Red: flex clips | Purple: axial stops", 6.5)
 
@@ -292,14 +298,16 @@ def page_pcb(c: Canvas, p: CaseProfile) -> None:
             arrow(c, 229, y + 37, 229, y + 25)
         label(c, 255, y + 20, title, 6.5)
 
-    table(c, 18, 65, (50, 38, 42), (
+    table(c, 18, 72.5, (50, 38, 42), (
         ("FEATURE", "VALUE", "PURPOSE"),
         ("Side clearance", "0.25 mm/side", "FDM fit allowance"),
         ("Axial clearance", "0.30 mm/end", "prevents rattle"),
         ("Support height", "7.00 mm", "component clearance"),
         ("Clip thickness", "1.20 mm", "serviceable flexure"),
         ("Clip engagement", "0.55 mm max", "vertical retention"),
-        ("End-stop count", "2 per end", "connector load path"),
+        (("End-stop count", "2 per end", "connector load path")
+         if p.usb_bulkhead is None else
+         ("End bulkheads", "1 per end", "connector load path")),
     ), 8.0)
     label(c, 151, 43, "REMOVAL", 8)
     paragraph(c, 151, 34, (
@@ -334,7 +342,7 @@ def page_assembly(c: Canvas, p: CaseProfile) -> None:
     step_box(c, 14, 31, "3", "LOCK PCB TO COVER", (
         "Insert left PCB edge under the fixed orange lips.",
         "Press the right edge below both red snap clips.",
-        "Confirm both ends sit between the purple stops.",
+        "Confirm both ends sit between the purple end features.",
     ), PCB)
     step_box(c, 155, 31, "4", "CONNECT + CLOSE", (
         "Connect the LCD FPC without twisting it.",
@@ -371,12 +379,20 @@ def page_validation(c: Canvas, p: CaseProfile) -> None:
     ), 6.7, 7.0)
 
     label(c, 151, 68, "UNVERIFIED HARDWARE VALUES", 8, WARN)
-    paragraph(c, 151, 59, (
+    unverified = [
         "- USB-C and HDMI shell projection and maximum assembled component height",
         f"- LCD FPC tail geometry if the module is not {p.lcd.name}",
         "- Effective snap force for the user's printer, material, and print orientation",
-        "The first print is a fit prototype. Do not machine the final panel before this check.",
-    ), 6.7, 7.0, WARN)
+    ]
+    if p.usb_bulkhead is not None:
+        unverified.append(
+            f"- Cable overmould: USB-C <= {p.usb_opening.width:.1f} x {p.usb_opening.height:.1f} mm,"
+            f" HDMI <= {p.hdmi_opening.width:.1f} x {p.hdmi_opening.height:.1f} mm"
+        )
+    unverified.append(
+        "The first print is a fit prototype. Do not machine the final panel before this check."
+    )
+    paragraph(c, 151, 59, tuple(unverified), 6.7, 7.0, WARN)
     c.showPage()
 
 
@@ -592,7 +608,7 @@ def create_pdf(output: Path, p: CaseProfile) -> None:
     )
     c.setTitle("Tang Nano 9K Panel Case Retention Design")
     c.setAuthor("OpenAI Codex")
-    c.setSubject("Revision 4 M2 bosses, deep covers, exact sections, and snap retention")
+    c.setSubject("Revision 5 LCD profiles, seated rear cover, exact sections, and snap retention")
     for page in (page_overview, page_lcd, page_pcb, page_assembly,
                  page_validation, page_section_index, page_sections_ab,
                  page_sections_cd, page_expanded_covers, page_m2_layout):

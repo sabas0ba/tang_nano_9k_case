@@ -218,7 +218,8 @@ def create_three_view(output: Path, p: CaseProfile) -> None:
                             fill=False, lw=1.2, color="#d84315"))
     dimension_h(top, 0, bezel_w, -8, 0, f"{bezel_w:.1f}")
     dimension_v(top, 0, TOTAL_DEPTH, -10, 0, f"{TOTAL_DEPTH:.1f}")
-    top.text(bezel_w / 2, hdmi.z1 + 1.1, "HDMI opening", ha="center", color="#d84315", fontsize=8)
+    top.text(bezel_w / 2, hdmi.z0 - 1.0, "HDMI opening", ha="center", va="top",
+             color="#d84315", fontsize=8)
     top.set_xlim(-15, bezel_w + 5)
     top.set_ylim(-11, TOTAL_DEPTH + 5)
 

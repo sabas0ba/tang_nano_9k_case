@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable, Iterator
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -64,6 +66,49 @@ SECTION_FILLS = {
 }
 
 
+# Drawing extents, recorded in millimetres while ``recorded_bounds`` runs so
+# that tests can check every view against the sheet frame.
+Bounds = tuple[int, float, float, float, float]
+_RECORDED: list[Bounds] | None = None
+_RECORD_PAUSED = 0
+
+
+def record_bounds(c: Canvas, x0: float, y0: float, x1: float, y1: float) -> None:
+    if _RECORDED is not None and not _RECORD_PAUSED:
+        _RECORDED.append((c.getPageNumber(), min(x0, x1), min(y0, y1),
+                          max(x0, x1), max(y0, y1)))
+
+
+@contextmanager
+def unrecorded() -> Iterator[None]:
+    """Exclude sheet furniture such as the frame and title block."""
+    global _RECORD_PAUSED
+    _RECORD_PAUSED += 1
+    try:
+        yield
+    finally:
+        _RECORD_PAUSED -= 1
+
+
+def recorded_bounds(draw: Callable[[], None]) -> list[Bounds]:
+    """Run ``draw`` and return the extents of every recorded primitive."""
+    global _RECORDED
+    _RECORDED = []
+    try:
+        draw()
+        return _RECORDED
+    finally:
+        _RECORDED = None
+
+
+def text_bounds(c: Canvas, x: float, y: float, text: str, size: float,
+                font: str, align: str) -> None:
+    width = pdfmetrics.stringWidth(text, font, size) / mm
+    x0 = {"left": x, "center": x - width / 2.0, "right": x - width}[align]
+    height = size / mm
+    record_bounds(c, x0, y - 0.25 * height, x0 + width, y + 0.8 * height)
+
+
 def tx(value: float) -> float:
     return value * mm
 
@@ -75,6 +120,7 @@ def dim_text(value: float) -> str:
 
 def rect(c: Canvas, x: float, y: float, w: float, h: float, *,
          stroke=INK, fill=None, width=0.35, dash=None, radius=0.0) -> None:
+    record_bounds(c, x, y, x + w, y + h)
     c.saveState()
     c.setStrokeColor(stroke)
     c.setLineWidth(width)
@@ -92,6 +138,7 @@ def rect(c: Canvas, x: float, y: float, w: float, h: float, *,
 
 def line(c: Canvas, x0: float, y0: float, x1: float, y1: float,
          *, color=INK, width=0.35, dash=None) -> None:
+    record_bounds(c, x0, y0, x1, y1)
     c.saveState()
     c.setStrokeColor(color)
     c.setLineWidth(width)
@@ -103,6 +150,7 @@ def line(c: Canvas, x0: float, y0: float, x1: float, y1: float,
 
 def label(c: Canvas, x: float, y: float, text: str, size=7.0,
           *, color=INK, align="left", font="DejaVu") -> None:
+    text_bounds(c, x, y, text, size, font, align)
     c.saveState()
     c.setFillColor(color)
     c.setFont(font, size)
@@ -138,6 +186,10 @@ def dim_v(c: Canvas, y0: float, y1: float, x: float, source_x: float,
     line(c, source_x, y0, x, y0, color=DIM, width=0.25)
     line(c, source_x, y1, x, y1, color=DIM, width=0.25)
     arrow(c, x, y0, x, y1, color=DIM, width=0.35)
+    width = pdfmetrics.stringWidth(text, "Helvetica", 6.5) / mm
+    height = 6.5 / mm
+    record_bounds(c, x - 1.3 - 0.8 * height, (y0 + y1 - width) / 2,
+                  x - 1.3 + 0.25 * height, (y0 + y1 + width) / 2)
     c.saveState()
     c.translate(tx(x - 1.3), tx((y0 + y1) / 2))
     c.rotate(90)
@@ -148,6 +200,11 @@ def dim_v(c: Canvas, y0: float, y1: float, x: float, source_x: float,
 
 
 def page_header(c: Canvas, page: int, title: str, subtitle: str) -> None:
+    with unrecorded():
+        _page_header(c, page, title, subtitle)
+
+
+def _page_header(c: Canvas, page: int, title: str, subtitle: str) -> None:
     page_w, page_h = landscape(A4)
     c.setStrokeColor(INK)
     c.setLineWidth(0.5)
@@ -385,7 +442,9 @@ def draw_retainer(c: Canvas, p: CaseProfile, x: float, y: float) -> None:
              fill=colors.HexColor("#ffcc80"), width=0.25)
     dim_h(c, x, x + retainer_w, y - 7.0, y, dim_text(retainer_w))
     dim_v(c, y, y + retainer_h, x - 7.0, x, dim_text(retainer_h))
-    label(c, x + retainer_w / 2, y + 2.7, "LCD RETAINER, t=2.00",
+    # Label the bar opposite the FPC relief.
+    label_y = y + 2.7 if p.lcd.fpc_side == "top" else y + retainer_h - by / 2 - 1.0
+    label(c, x + retainer_w / 2, label_y, "LCD RETAINER, t=2.00",
           6.5, align="center", font="Helvetica")
 
 
@@ -396,6 +455,33 @@ def draw_rear_hatches(c: Canvas, p: CaseProfile, x: float, y: float) -> None:
             rect(c, x + hatch_x, y + hatch_y,
                  model.REAR_HATCH_SLOT_W, model.REAR_HATCH_SLOT_H,
                  fill=colors.white, stroke=HIDDEN, width=0.25)
+
+
+def draw_end_stops(c: Canvas, p: CaseProfile, board_x: float, board_y: float,
+                   draw_rect: Callable[..., None] | None = None) -> None:
+    """Draw the PCB end stops, or the connector bulkheads that replace them."""
+    draw = draw_rect or rect
+    stop_fill = colors.HexColor("#ce93d8")
+    gap = model.PCB_AXIAL_CLEARANCE
+    if p.usb_bulkhead is None:
+        # Paired axial stops leave both connector centrelines clear.
+        for stop_x0, stop_x1 in model.PCB_END_STOP_XS:
+            w = stop_x1 - stop_x0
+            t = model.PCB_END_STOP_T
+            draw(c, board_x + stop_x0, board_y - gap - t, w, t,
+                 fill=stop_fill, width=0.25)
+            draw(c, board_x + stop_x0, board_y + BOARD_L + gap, w, t,
+                 fill=stop_fill, width=0.25)
+        return
+    centre_x = board_x + BOARD_W / 2.0
+    for bulkhead, y0 in (
+        (p.usb_bulkhead, board_y - gap - p.usb_bulkhead.thickness),
+        (p.hdmi_bulkhead, board_y + BOARD_L + gap),
+    ):
+        draw(c, centre_x - bulkhead.half_w, y0, bulkhead.half_w * 2.0,
+             bulkhead.thickness, fill=stop_fill, width=0.25)
+        draw(c, centre_x - bulkhead.notch.half_w, y0, bulkhead.notch.width,
+             bulkhead.thickness, stroke=HIDDEN, dash=(1, 1), width=0.25)
 
 
 def draw_rear_cover(c: Canvas, p: CaseProfile, x: float, y: float, board=False) -> None:
@@ -418,12 +504,7 @@ def draw_rear_cover(c: Canvas, p: CaseProfile, x: float, y: float, board=False) 
              fill=colors.HexColor("#ffcc80"), width=0.25)
         rect(c, board_x + BOARD_W - 1.2, y0, 1.9, y1 - y0,
              fill=colors.HexColor("#ef9a9a"), width=0.25)
-    # Paired axial stops leave both connector centrelines clear.
-    for sx in (board_x + 4.5, board_x + 18.5):
-        rect(c, sx, board_y - 0.6, 3.0, 0.3,
-             fill=colors.HexColor("#ce93d8"), width=0.25)
-        rect(c, sx, board_y + BOARD_L + 0.3, 3.0, 0.3,
-             fill=colors.HexColor("#ce93d8"), width=0.25)
+    draw_end_stops(c, p, board_x, board_y)
     if board:
         draw_board(c, board_x, board_y, vertical=True, with_dims=False)
         label(c, board_x + BOARD_W + 3.0, board_y + BOARD_L / 2,
@@ -440,8 +521,8 @@ def page_1(c: Canvas, p: CaseProfile) -> None:
     draw_rear_cover(c, p, x0, y0, board=True)
     label(c, x0, 176.0, "STEP 1  INSTALL PCB IN REAR-COVER RAILS", 8)
     label(c, x0, 53.0, "Component side faces LCD; microSD side faces rear service aperture.", 6.5)
-    # Right: assembled rear view.
-    x1, y1 = 166.0, 68.0
+    # Right: assembled rear view, kept inside the sheet frame.
+    x1, y1 = min(166.0, 286.0 - p.bezel_w), 68.0
     rect(c, x1, y1, p.bezel_w, p.bezel_h, fill=PART)
     cover_x = x1 + p.cover_x
     cover_y = y1 + p.cover_y
@@ -460,9 +541,10 @@ def page_1(c: Canvas, p: CaseProfile) -> None:
 
 def page_2(c: Canvas, p: CaseProfile) -> None:
     page_header(c, 2, "Printed part A: front chassis", "Front outline, centre section, and panel cutout — true 1:1")
-    draw_front_chassis(c, p, 27.0, 75.0)
-    # X-Z section at true scale.
-    sx, sy = 177.0, 108.0
+    # Left column: front outline above the X-Z centre section.
+    cx, cy = 20.0, 180.0 - p.bezel_h
+    draw_front_chassis(c, p, cx, cy)
+    sx, sy = cx, cy - 50.0
     rect(c, sx, sy, p.bezel_w, BEZEL_T, fill=PART)
     rect(c, sx + p.body_x, sy + BEZEL_T, p.body_w, BODY_D - BEZEL_T, fill=PART)
     # Hollow interior overlay.
@@ -473,14 +555,14 @@ def page_2(c: Canvas, p: CaseProfile) -> None:
     label(c, sx + p.bezel_w / 2, sy + BODY_D + 6.0,
           f"CENTRE SECTION X-Z / CHASSIS DEPTH {dim_text(BODY_D)}",
           6.5, align="center", font="Helvetica")
-    # Panel opening template overlay (separate 1:1 rectangle).
-    px, py = 173.0, 20.0
+    # Right column: panel opening template (separate 1:1 rectangle).
+    px, py = 286.0 - p.panel_cutout_w, 180.0 - p.panel_cutout_h
     rect(c, px, py, p.panel_cutout_w, p.panel_cutout_h,
          stroke=DIM, dash=(4, 2))
     label(c, px + p.panel_cutout_w / 2, py + p.panel_cutout_h / 2,
           f"PANEL CUTOUT {dim_text(p.panel_cutout_w)} x {dim_text(p.panel_cutout_h)}",
           7, color=DIM, align="center", font="Helvetica")
-    label(c, 27.0, 58.0,
+    label(c, sx, sy - 18.0,
           "STL variants: 1.5 / 2.0 / 3.0 mm panels. Outer geometry is common; snap catch depth changes.",
           6.5)
     finish_page(c)
@@ -490,8 +572,9 @@ def page_3(c: Canvas, p: CaseProfile) -> None:
     page_header(c, 3, "Printed parts B/C", "LCD retainer and rear cover with integrated PCB carrier — true 1:1")
     draw_retainer(c, p, 18.0, 92.0)
     label(c, 18.0, 174.0, "B  LCD RETAINER", 8, font="Helvetica")
-    draw_rear_cover(c, p, 165.0, 90.0, board=False)
-    label(c, 165.0, 174.0, "C  REAR COVER + PCB CARRIER", 8, font="Helvetica")
+    cover_x = min(165.0, 286.0 - p.cover_w)
+    draw_rear_cover(c, p, cover_x, 90.0, board=False)
+    label(c, cover_x, 174.0, "C  REAR COVER + PCB CARRIER", 8, font="Helvetica")
     # Actual-size thickness blocks and notes.
     rect(c, 25.0, 41.0, RETAINER_T, 25.0, fill=RETAINER)
     dim_h(c, 25.0, 27.0, 35.0, 41.0, "2.00")
@@ -499,41 +582,45 @@ def page_3(c: Canvas, p: CaseProfile) -> None:
     rect(c, 92.0, 41.0, COVER_T, 25.0, fill=PART)
     dim_h(c, 92.0, 94.0, 35.0, 41.0, "2.00")
     label(c, 101.0, 51.0, "COVER PLATE THICKNESS", 6.5)
-    label(c, 165.0, 68.0, "Orange: fixed guide. Red: two flexible PCB snap clips.", 6.5)
-    label(c, 165.0, 61.0, "Centre aperture: microSD access, ventilation, and board removal.", 6.5)
-    label(c, 165.0, 54.0, "Purple: end stops resist USB-C/HDMI insertion loads.", 6.5)
+    label(c, cover_x, 68.0, "Orange: fixed guide. Red: two flexible PCB snap clips.", 6.5)
+    label(c, cover_x, 61.0, "Centre aperture: microSD access, ventilation, and board removal.", 6.5)
+    stop_name = "end stops" if p.usb_bulkhead is None else "connector bulkheads"
+    label(c, cover_x, 54.0, f"Purple: {stop_name} resist USB-C/HDMI insertion loads.", 6.5)
     finish_page(c)
 
 
 def page_4(c: Canvas, p: CaseProfile) -> None:
     page_header(c, 4, "Physical hardware check templates", "LCD, Tang Nano 9K, and panel cutout — all true 1:1")
-    draw_lcd(c, p, 24.0, 110.0)
-    label(c, 24.0, 179.0, "LCD REFERENCE", 8, font="Helvetica")
-    draw_board(c, 178.0, 136.0, vertical=False)
-    label(c, 178.0, 179.0, "TANG NANO 9K PCB", 8, font="Helvetica")
+    lcd = p.lcd
+    fpc_above = 4.0 if lcd.fpc_side == "top" else 0.0
+    lx, ly = 24.0, 178.0 - fpc_above - lcd.height
+    draw_lcd(c, p, lx, ly)
+    label(c, lx, 182.0, "LCD REFERENCE", 8, font="Helvetica")
+    draw_board(c, 178.0, 140.0, vertical=False)
+    label(c, 178.0, 182.0, "TANG NANO 9K PCB", 8, font="Helvetica")
     # Panel cutout template.
-    cut_x, cut_y = 22.0, 18.0
+    cut_x, cut_y = 286.0 - p.panel_cutout_w, 22.0
     rect(c, cut_x, cut_y, p.panel_cutout_w, p.panel_cutout_h,
          stroke=DIM, dash=(4, 2))
     dim_h(c, cut_x, cut_x + p.panel_cutout_w, cut_y + p.panel_cutout_h + 4.4,
           cut_y + p.panel_cutout_h, dim_text(p.panel_cutout_w))
     dim_v(c, cut_y, cut_y + p.panel_cutout_h, cut_x - 7.0, cut_x,
           dim_text(p.panel_cutout_h))
-    label(c, cut_x + p.panel_cutout_w / 2, cut_y + 37.0, "PANEL CUTOUT", 8,
-          color=DIM, align="center", font="Helvetica")
-    # Status legend.
-    lcd = p.lcd
-    label(c, 160.0, 99.0, "DIMENSION STATUS", 8)
-    label(c, 160.0, 89.0, "VERIFIED: PCB outline 70.00 x 26.00 mm", 6.5)
-    label(c, 160.0, 81.5,
+    label(c, cut_x + p.panel_cutout_w / 2, cut_y + p.panel_cutout_h / 2,
+          "PANEL CUTOUT", 8, color=DIM, align="center", font="Helvetica")
+    # Status legend below the LCD template.
+    tx0, ty0 = lx, ly - 22.0
+    label(c, tx0, ty0, "DIMENSION STATUS", 8)
+    label(c, tx0, ty0 - 10.0, "VERIFIED: PCB outline 70.00 x 26.00 mm", 6.5)
+    label(c, tx0, ty0 - 17.5,
           f"VERIFIED: LCD outline {dim_text(lcd.width)} x {dim_text(lcd.height)}"
-          f" x {dim_text(lcd.thickness)} mm", 6.5)
-    label(c, 160.0, 74.0,
+          f" x {dim_text(lcd.thickness)} mm ({lcd.name})", 6.5)
+    label(c, tx0, ty0 - 25.0,
           f"DESIGN VALUE: panel cutout {dim_text(p.panel_cutout_w)}"
           f" x {dim_text(p.panel_cutout_h)} mm", 6.5)
-    label(c, 160.0, 66.5, "CHECK HARDWARE: connector height/projection and LCD FPC shape", 6.5,
+    label(c, tx0, ty0 - 32.5, "CHECK HARDWARE: connector height/projection and LCD FPC shape", 6.5,
           color=ALERT)
-    label(c, 160.0, 51.0,
+    label(c, tx0, ty0 - 45.0,
           "Do not print the STL if your LCD does not match this template.",
           6.5, color=ALERT)
     finish_page(c)
@@ -543,7 +630,7 @@ def page_5(c: Canvas, p: CaseProfile) -> None:
     page_header(c, 5, "Assembly section index",
                 "Cutting planes are positioned to pass through the actual hooks, clips, connectors and service aperture")
     sections = {section.code: section for section in section_definitions(p)}
-    x0, y0 = 20.0, 77.0
+    x0, y0 = 20.0, 158.0 - p.bezel_h
     draw_front_chassis(c, p, x0, y0)
     board_x = x0 + p.pcb_x
     board_y = y0 + p.pcb_y
@@ -578,10 +665,10 @@ def page_5(c: Canvas, p: CaseProfile) -> None:
         label(c, 164.0, yy - 6.0, section.purpose, 5.8,
               color=HIDDEN, font="Helvetica")
     section_legend(c, 164.0, 72.0)
-    label(c, 164.0, 25.0,
+    label(c, 164.0, 26.0,
           "SOLID FILLS: evaluated directly from STL CSG geometry.",
           6.2, font="Helvetica")
-    label(c, 164.0, 18.0,
+    label(c, 164.0, 19.0,
           "DASHED ORANGE: electronics envelope only; measure the physical board.",
           6.2, color=REFERENCE, font="Helvetica")
     finish_page(c)
@@ -621,10 +708,11 @@ def page_6(c: Canvas, p: CaseProfile) -> None:
           7, align="center", font="Helvetica")
     dim_h(c, bx, bx + p.bezel_w, by - 8.0, by, dim_text(p.bezel_w))
     dim_v(c, by, by + depth, bx - 8.0, bx, dim_text(depth))
-    label(c, 158.0, 73.0, "The PCB is not floating:", 7.2)
-    label(c, 158.0, 65.0, "z=18.40 support shelves under both edges", 6.3)
-    label(c, 158.0, 58.0, "left fixed lip + right 1.20 mm cantilever clip", 6.3)
-    label(c, 158.0, 51.0, "dashed volumes above/below PCB are unverified components", 6.1,
+    nx = max(158.0, bx + p.bezel_w + 6.0)
+    label(c, nx, 73.0, "The PCB is not floating:", 7.2)
+    label(c, nx, 65.0, "z=18.40 support shelves under both edges", 6.3)
+    label(c, nx, 58.0, "left fixed lip + right 1.20 mm cantilever clip", 6.3)
+    label(c, nx, 51.0, "dashed volumes above/below PCB are unverified components", 6.1,
           color=REFERENCE)
     finish_page(c)
 
@@ -679,7 +767,9 @@ def page_8(c: Canvas, p: CaseProfile) -> None:
         f"2. Place the LCD at z={BEZEL_T:.2f}..{lcd_rear_z:.2f} with its display toward the bezel.",
         "3. Push the retainer until all four C-C hook heads engage their wall windows.",
         "4. Insert the PCB left edge below the B-B fixed lips and press the right edge into both clips.",
-        "5. Confirm the PCB rests on four shelves and between four A-A end stops.",
+        ("5. Confirm the PCB rests on four shelves and between four A-A end stops."
+         if p.usb_bulkhead is None else
+         "5. Confirm the PCB rests on four shelves and between both connector bulkheads."),
         "6. Connect the FPC, verify the measured connector/component envelopes, then latch the cover.",
     )
     for index, text_value in enumerate(steps):
@@ -699,13 +789,18 @@ def page_8(c: Canvas, p: CaseProfile) -> None:
         label(c, 18.0, 59.0 - index * 8.0, f"- {text_value}", 6.3,
               color=REFERENCE if index == 2 else INK)
     label(c, 166.0, 171.0, "MEASUREMENT HOLD POINTS", 9)
-    holds = (
+    holds = [
         "USB-C shell: width, height, projection",
         "HDMI shell: width, height, projection",
         "microSD socket: x/y position and rear height",
         "maximum component height on both PCB faces",
         "LCD FPC exit point, width and bend radius",
-    )
+    ]
+    if p.usb_bulkhead is not None:
+        holds.append(
+            f"cable overmould: USB-C {p.usb_opening.width:.1f} x {p.usb_opening.height:.1f},"
+            f" HDMI {p.hdmi_opening.width:.1f} x {p.hdmi_opening.height:.1f} max"
+        )
     for index, text_value in enumerate(holds):
         label(c, 166.0, 158.0 - index * 10.0, f"□  {text_value}", 6.5,
               color=REFERENCE)
@@ -763,7 +858,7 @@ def page_10(c: Canvas, p: CaseProfile) -> None:
     page_header(c, 10, "HDMI-end two-hole mounting layout",
                 "Rear projection at true 1:1; screw fixation is optional and supplements the snap carrier")
     cover_w, cover_h = p.cover_w, p.cover_h
-    x0, y0 = 22.0, 82.0
+    x0, y0 = 22.0, min(82.0, 156.6 - cover_h)
     rect(c, x0, y0, cover_w, cover_h, fill=PART)
     draw_rear_hatches(c, p, x0, y0)
     board_x = x0 + (cover_w - BOARD_W) / 2.0
@@ -792,7 +887,7 @@ def page_10(c: Canvas, p: CaseProfile) -> None:
     label(c, x0 + cover_w / 2.0, 169.0,
           "REAR-COVER INBOARD VIEW / HDMI END AT TOP",
           7, align="center", font="Helvetica")
-    label(c, x0 + cover_w / 2.0, 74.0,
+    label(c, x0 + cover_w / 2.0, y0 - 12.0,
           "Blue: printed bosses / Green dashed: Tang Nano 9K PCB",
           6.2, align="center", font="Helvetica")
 

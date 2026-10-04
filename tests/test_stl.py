@@ -54,6 +54,14 @@ EXPECTED_BOUNDS = {
         "cover_20": (0.0, 111.6, 0.0, 74.6, 0.0, 24.2),
         "cover_30": (0.0, 111.6, 0.0, 74.6, 0.0, 34.2),
     },
+    "5p0in": {
+        "front": (0.0, 131.8, 0.0, 87.0, 0.0, 27.0),
+        "retainer": (-0.6, 122.0, 0.0, 76.6, 0.0, 6.5),
+        # The HDMI bulkhead free end at global z=14.6 is the highest feature.
+        "cover": (0.0, 125.4, 0.0, 80.6, 0.0, 14.4),
+        "cover_20": (0.0, 125.4, 0.0, 80.6, 0.0, 27.4),
+        "cover_30": (0.0, 125.4, 0.0, 80.6, 0.0, 37.4),
+    },
 }
 
 
@@ -166,6 +174,8 @@ class GeneratedMeshes(unittest.TestCase):
 
     def test_rear_cover_stops_are_buttressed_to_the_rim(self):
         for profile in PROFILES.values():
+            if profile.usb_bulkhead is not None:
+                continue
             for clearance in (model.STANDARD_REAR_CLEARANCE,
                               *model.EXPANDED_REAR_CLEARANCES):
                 cover = model.rear_cover(profile, clearance)
@@ -178,6 +188,72 @@ class GeneratedMeshes(unittest.TestCase):
                                                        support_z - 0.50))
                         self.assertTrue(cover.contains(x, board_y + model.PCB_H + 0.40,
                                                        support_z - 0.50))
+
+    def bulkhead_cases(self):
+        for profile in PROFILES.values():
+            if profile.usb_bulkhead is None:
+                continue
+            centre_x = profile.pcb_x + model.PCB_W / 2.0
+            yield profile, centre_x, (
+                (profile.usb_bulkhead, profile.usb_opening,
+                 profile.pcb_y - model.PCB_AXIAL_CLEARANCE, -1.0),
+                (profile.hdmi_bulkhead, profile.hdmi_opening,
+                 profile.pcb_y + model.PCB_H + model.PCB_AXIAL_CLEARANCE, 1.0),
+            )
+
+    def test_bulkheads_stop_the_pcb_and_keep_the_notch_open(self):
+        cases = list(self.bulkhead_cases())
+        self.assertTrue(cases, "no profile uses rear-cover bulkheads")
+        for profile, centre_x, ends in cases:
+            for clearance in (model.STANDARD_REAR_CLEARANCE,
+                              *model.EXPANDED_REAR_CLEARANCES):
+                parts = {part.name: part.solid for part in assembly_parts(
+                    profile, rear_clearance=clearance
+                )}
+                cover = parts["Rear cover + carrier"]
+                pcb = parts["Tang Nano 9K PCB"]
+                for bulkhead, _, stop_y, direction in ends:
+                    cheek_x = centre_x + (bulkhead.notch.half_w + bulkhead.half_w) / 2.0
+                    inside = stop_y + direction * 0.05
+                    gap = stop_y - direction * 0.05
+                    with self.subTest(profile=profile.key, clearance=clearance,
+                                      direction=direction):
+                        # Stop face at the PCB plane, 0.30 mm from the PCB end.
+                        self.assertTrue(cover.contains(cheek_x, inside, 19.0))
+                        self.assertFalse(cover.contains(cheek_x, gap, 19.0))
+                        self.assertFalse(pcb.contains(cheek_x, gap, 19.0))
+                        # Connector notch is open from the LCD side down to
+                        # the compact-profile window bottom.
+                        for z in (bulkhead.notch.z0 - 0.5, 19.0,
+                                  bulkhead.notch.z1 - 0.05):
+                            self.assertFalse(cover.contains(centre_x, inside, z))
+                        self.assertTrue(cover.contains(
+                            centre_x, inside, bulkhead.notch.z1 + 0.05))
+
+    def test_cable_overmould_reaches_bulkhead(self):
+        steps = 6
+        for profile, centre_x, ends in self.bulkhead_cases():
+            parts = assembly_parts(profile)
+            for bulkhead, opening, stop_y, direction in ends:
+                face_y = stop_y + direction * bulkhead.thickness
+                if direction < 0:
+                    y_range = (profile.body_y - 0.5, face_y - 0.05)
+                else:
+                    y_range = (face_y + 0.05, profile.body_y + profile.body_h + 0.5)
+                blocked = []
+                for i in range(steps + 1):
+                    x = centre_x - opening.half_w + 0.05 + (
+                        (opening.width - 0.1) * i / steps)
+                    for j in range(steps + 1):
+                        z = opening.z0 + 0.05 + (opening.height - 0.1) * j / steps
+                        for k in range(steps + 1):
+                            y = y_range[0] + (y_range[1] - y_range[0]) * k / steps
+                            blocked.extend(
+                                part.name for part in parts
+                                if part.solid.contains(x, y, z)
+                            )
+                with self.subTest(profile=profile.key, direction=direction):
+                    self.assertEqual(blocked, [])
 
     def test_rear_cover_has_explicit_hatch_cutouts(self):
         for profile in PROFILES.values():

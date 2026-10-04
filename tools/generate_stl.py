@@ -501,30 +501,36 @@ def rear_cover(profile: CaseProfile,
             solid.add(board_x + PCB_W - overlap, y0, z0,
                       clip_x1, y1, z0 + 0.20)
 
-    # Paired end stops take USB-C/HDMI insertion loads instead of transferring
-    # them through the PCB connector solder joints.  Each stop is carried by a
-    # buttress that overlaps the perimeter rim, so the STL contains one
-    # connected printable part instead of four floating stop bodies.
-    stop_y_ranges = (
-        (board_y - PCB_AXIAL_CLEARANCE - PCB_END_STOP_T,
-         board_y - PCB_AXIAL_CLEARANCE),
-        (board_y + PCB_H + PCB_AXIAL_CLEARANCE,
-         board_y + PCB_H + PCB_AXIAL_CLEARANCE + PCB_END_STOP_T),
-    )
-    for stop_x0, stop_x1 in PCB_END_STOP_XS:
-        x0, x1 = board_x + stop_x0, board_x + stop_x1
-        lower_y0, lower_y1 = stop_y_ranges[0]
-        upper_y0, upper_y1 = stop_y_ranges[1]
-        solid.add(x0, lower_y0, support_z, x1, lower_y1, board_top)
-        solid.add(x0, upper_y0, support_z, x1, upper_y1, board_top)
+    if profile.usb_bulkhead is None:
+        # Paired end stops take USB-C/HDMI insertion loads instead of
+        # transferring them through the PCB connector solder joints.  Each
+        # stop is carried by a buttress that overlaps the perimeter rim, so
+        # the STL contains one connected printable part instead of four
+        # floating stop bodies.
+        stop_y_ranges = (
+            (board_y - PCB_AXIAL_CLEARANCE - PCB_END_STOP_T,
+             board_y - PCB_AXIAL_CLEARANCE),
+            (board_y + PCB_H + PCB_AXIAL_CLEARANCE,
+             board_y + PCB_H + PCB_AXIAL_CLEARANCE + PCB_END_STOP_T),
+        )
+        for stop_x0, stop_x1 in PCB_END_STOP_XS:
+            x0, x1 = board_x + stop_x0, board_x + stop_x1
+            lower_y0, lower_y1 = stop_y_ranges[0]
+            upper_y0, upper_y1 = stop_y_ranges[1]
+            solid.add(x0, lower_y0, support_z, x1, lower_y1, board_top)
+            solid.add(x0, upper_y0, support_z, x1, upper_y1, board_top)
 
-        # These supports remain outside the PCB outline.  Their overlap with
-        # the bottom/top rim gives a volumetric union that survives importers
-        # which do not merge bodies that merely share a coplanar face.
-        solid.add(x0, lower_y0, plate_t,
-                  x1, rim_y + rim_t, support_z)
-        solid.add(x0, rim_y + rim_h - rim_t, plate_t,
-                  x1, upper_y1, support_z)
+            # These supports remain outside the PCB outline.  Their overlap
+            # with the bottom/top rim gives a volumetric union that survives
+            # importers which do not merge bodies that merely share a
+            # coplanar face.
+            solid.add(x0, lower_y0, plate_t,
+                      x1, rim_y + rim_t, support_z)
+            solid.add(x0, rim_y + rim_h - rim_t, plate_t,
+                      x1, upper_y1, support_z)
+    else:
+        _add_port_bulkheads(solid, profile, board_x, board_y, rim_y, rim_t,
+                            rim_hz, depth_extension)
 
     # Deep covers stand behind the chassis.  Perimeter posts reach forward to
     # the chassis wall end so every variant has the same positive seat as
@@ -580,6 +586,66 @@ def rear_cover(profile: CaseProfile,
                       plate_t + 0.1)
 
     return solid
+
+
+def _add_port_bulkheads(
+    solid: RectilinearSolid,
+    profile: CaseProfile,
+    board_x: float,
+    board_y: float,
+    rim_y: float,
+    rim_t: float,
+    rim_hz: float,
+    depth_extension: float,
+) -> None:
+    """Add connector bulkheads at both PCB ends of a rear cover.
+
+    Used when the LCD makes the chassis taller than the PCB.  Each bulkhead
+    reproduces the chassis wall of the compact profile 0.30 mm from the PCB
+    end: its inner face is the axial end stop and its U-shaped notch is the
+    connector opening.  The notch is open toward the LCD so the PCB can be
+    pressed into the carrier.  The rim is cut back in front of each bulkhead
+    so that a cable overmould entering the enlarged chassis opening reaches
+    the bulkhead face.
+    """
+    seat_z = depth_extension
+    centre_x = board_x + PCB_W / 2.0
+    ends = (
+        (profile.usb_bulkhead, profile.usb_opening, -1.0),
+        (profile.hdmi_bulkhead, profile.hdmi_opening, 1.0),
+    )
+    for bulkhead, opening, direction in ends:
+        if bulkhead is None:
+            raise ValueError(f"{profile.key}: bulkheads must be defined in pairs")
+        # The notch cut overshoots only toward the chassis wall, so it cannot
+        # touch the M2 bosses or shelves on the PCB side.
+        if direction < 0:
+            inner_y = board_y - PCB_AXIAL_CLEARANCE
+            y0, y1 = inner_y - bulkhead.thickness, inner_y
+            rim_cut = (rim_y - 0.1, y0)
+            notch_y = (y0 - 0.1, y1)
+        else:
+            inner_y = board_y + PCB_H + PCB_AXIAL_CLEARANCE
+            y0, y1 = inner_y, inner_y + bulkhead.thickness
+            rim_cut = (y1, profile.cover_h - rim_y + 0.1)
+            notch_y = (y0, y1 + 0.1)
+        # Global z maps to cover z as seat_z + BODY_D - z.
+        free_end_z = seat_z + BODY_D - bulkhead.notch.z0
+        notch_floor_z = seat_z + BODY_D - bulkhead.notch.z1
+        rim_half = opening.half_w + 0.30
+
+        solid.cut(centre_x - rim_half, rim_cut[0], COVER_PLATE_T,
+                  centre_x + rim_half, rim_cut[1], rim_hz + 0.1)
+        solid.add(centre_x - bulkhead.half_w, y0, COVER_PLATE_T,
+                  centre_x + bulkhead.half_w, y1, free_end_z)
+        solid.cut(centre_x - bulkhead.notch.half_w, notch_y[0], notch_floor_z,
+                  centre_x + bulkhead.notch.half_w, notch_y[1], free_end_z + 0.1)
+        # The rim is removed only in front of the bulkhead; the remaining rim
+        # must overlap it so the cover stays one connected part.
+        rim_overlaps = (y0 < rim_y + rim_t if direction < 0
+                        else y1 > profile.cover_h - rim_y - rim_t)
+        if not rim_overlaps:
+            raise ValueError(f"{profile.key}: bulkhead does not reach the rim")
 
 
 def _translated_triangles(triangles, dx: float, dy: float, dz: float):

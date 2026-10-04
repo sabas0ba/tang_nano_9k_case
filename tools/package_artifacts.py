@@ -16,7 +16,7 @@ from tools.profiles import PROFILES  # noqa: E402
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ARCHIVE_NAME = "tang-nano-9k-panel-case-r4.zip"
+ARCHIVE_NAME = "tang-nano-9k-panel-case-r5.zip"
 ARCHIVE_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
 DOCUMENT_PATHS = (
     "README.md",

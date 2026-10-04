@@ -36,7 +36,7 @@ jobs:
         with:
           name: tang-nano-9k-panel-case-${{ github.sha }}
           path: |
-            dist/tang-nano-9k-panel-case-r4.zip
+            dist/tang-nano-9k-panel-case-r5.zip
             dist/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
