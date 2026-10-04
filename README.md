@@ -6,6 +6,9 @@ Tang Nano 9KとSipeedが例示している4.3インチ480×272 RGB LCDを、既�
 
 ## 収録STL
 
+STLは`make stl`で`build/<profile>/`へ生成します。`<profile>`はLCDごとの設計
+プロファイル名で、4.3インチ版は`4p3in`です。
+
 | ファイル | 用途 |
 | --- | --- |
 | `front_chassis_panel_1p5mm.stl` | 厚さ1.5 mmパネル用の前面シャーシ |
@@ -24,16 +27,17 @@ Tang Nano 9KとSipeedが例示している4.3インチ480×272 RGB LCDを、既�
 
 ## レンダリング・図面
 
-`make visuals`で以下を生成します。
+`make visuals`、`make scale-drawing`、`make design-docs`で、プロファイルごとに
+`output/<profile>/`以下へ次のファイルを生成します。
 
 | ファイル | 内容 |
 | --- | --- |
-| `output/images/assembly_render.png` | 内部構成を示す半透明組立レンダリング |
-| `output/images/exploded_render.png` | 前面から背面への分解レンダリング |
-| `output/images/orthographic_three_view.png` | 前面・上面・右側面の三面図 |
-| `output/pdf/tang-nano-9k-panel-case-drawing.pdf` | 三面図、レンダリング、主要寸法をまとめたPDF |
-| `output/pdf/tang-nano-9k-panel-case-1to1.pdf` | A4横・原寸1:1の部品、実機照合、組立断面図（100 mm校正線付き） |
-| `output/pdf/tang-nano-9k-panel-case-retention-design.pdf` | スナップ固定、荷重経路、組立・分解方法の図解設計書 |
+| `images/assembly_render.png` | 内部構成を示す半透明組立レンダリング |
+| `images/exploded_render.png` | 前面から背面への分解レンダリング |
+| `images/orthographic_three_view.png` | 前面・上面・右側面の三面図 |
+| `pdf/tang-nano-9k-panel-case-drawing.pdf` | 三面図、レンダリング、主要寸法をまとめたPDF |
+| `pdf/tang-nano-9k-panel-case-1to1.pdf` | A4横・原寸1:1の部品、実機照合、組立断面図（100 mm校正線付き） |
+| `pdf/tang-nano-9k-panel-case-retention-design.pdf` | スナップ固定、荷重経路、組立・分解方法の図解設計書 |
 | `docs/retention-design.md` | 固定構造、公差、検証項目を記載した日本語設計書 |
 
 原寸PDFの5〜10ページと固定設計PDFの6〜10ページには、STLと同じCSG形状から生成した

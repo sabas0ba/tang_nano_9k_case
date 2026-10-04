@@ -17,7 +17,10 @@ from reportlab.pdfgen.canvas import Canvas
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import create_scale_drawing as scale_drawing  # noqa: E402
+from tools import generate_stl as model  # noqa: E402
+from tools.assembly_sections import section_definitions  # noqa: E402
 from tools.font_paths import dejavu_sans  # noqa: E402
+from tools.profiles import PROFILES, CaseProfile, get_profile  # noqa: E402
 
 
 PAGE_W, PAGE_H = landscape(A4)
@@ -96,15 +99,18 @@ def paragraph(c: Canvas, x: float, y: float, lines: tuple[str, ...],
     return y - len(lines) * leading
 
 
-def header(c: Canvas, page: int, title: str, subtitle: str) -> None:
+def header(c: Canvas, p: CaseProfile, page: int, title: str, subtitle: str) -> None:
     rect(c, 7, 7, 283, 196, width=0.55)
     label(c, 12, 195.5, title, 14)
     label(c, 12, 189.5, subtitle, 7.2, MUTED)
     label(c, 285, 195.5, f"RETENTION DESIGN  REV 4  |  {page}/{TOTAL_PAGES}",
           7, INK, "right")
     line(c, 7, 185.5, 290, 185.5, INK, 0.55)
+    lcd = p.lcd
+    dim = scale_drawing.dim_text
     label(c, 12, 10.2,
-          "Tang Nano 9K: 70.00 x 26.00 mm | LCD reference: HT043DA-V.0 105.50 x 67.15 x 2.90 mm",
+          f"Tang Nano 9K: 70.00 x 26.00 mm | LCD reference: {lcd.name} "
+          f"{dim(lcd.width)} x {dim(lcd.height)} x {dim(lcd.thickness)} mm",
           6.5, MUTED)
 
 
@@ -126,8 +132,8 @@ def table(c: Canvas, x: float, y: float, widths: tuple[float, ...],
             cursor += width
 
 
-def page_overview(c: Canvas) -> None:
-    header(c, 1, "Retention system overview",
+def page_overview(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 1, "Retention system overview",
            "Each internal item remains retained when the rear cover is removed")
 
     # Exploded stack schematic.
@@ -176,20 +182,30 @@ def page_overview(c: Canvas) -> None:
     c.showPage()
 
 
-def page_lcd(c: Canvas) -> None:
-    header(c, 2, "LCD retainer fixation",
+def page_lcd(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 2, "LCD retainer fixation",
            "Four independent cantilever hooks engage chassis side-wall windows")
 
     # Rear view, approximately 1:1.
     x, y = 18.0, 84.0
-    rect(c, x, y, 107.6, 70.6, fill=RETAINER)
-    rect(c, x + 5.3, y + 7.3, 97.0, 56.0, fill=colors.white)
-    rect(c, x + 41.3, y + 63.3, 25, 7.5, fill=colors.white)
-    for cy in (12.0, 58.0):
+    retainer_w, retainer_h = p.retainer_w, p.retainer_h
+    bx = (retainer_w - p.retainer_opening_w) / 2.0
+    by = (retainer_h - p.retainer_opening_h) / 2.0
+    rect(c, x, y, retainer_w, retainer_h, fill=RETAINER)
+    rect(c, x + bx, y + by, p.retainer_opening_w, p.retainer_opening_h,
+         fill=colors.white)
+    relief_x = p.retainer_lcd_dx + p.lcd.fpc_x0
+    relief_w = p.lcd.fpc_x1 - p.lcd.fpc_x0
+    relief_y = retainer_h - by if p.lcd.fpc_side == "top" else -0.2
+    rect(c, x + relief_x, y + relief_y, relief_w, by + 0.2, fill=colors.white)
+    for cy in p.retainer_hook_centres:
         rect(c, x - 0.6, y + cy - 3, 1.8, 6, fill=FIXED)
-        rect(c, x + 106.4, y + cy - 3, 1.8, 6, fill=FIXED)
-    label(c, x + 53.8, y + 34, "RETAINER REAR VIEW", 7, align="center")
-    label(c, x + 53.8, y - 7, "107.60 x 70.60 mm", 6.5, BLUE, "center")
+        rect(c, x + retainer_w - 1.2, y + cy - 3, 1.8, 6, fill=FIXED)
+    label(c, x + retainer_w / 2, y + retainer_h / 2 - 1.3, "RETAINER REAR VIEW", 7,
+          align="center")
+    label(c, x + retainer_w / 2, y - 7,
+          f"{scale_drawing.dim_text(retainer_w)} x {scale_drawing.dim_text(retainer_h)} mm",
+          6.5, BLUE, "center")
 
     # Enlarged hook section.
     label(c, 154, 166, "HOOK SECTION - 4:1 SCHEMATIC", 8)
@@ -229,11 +245,11 @@ def page_lcd(c: Canvas) -> None:
     c.showPage()
 
 
-def draw_board_carrier(c: Canvas, x: float, y: float, scale=1.0) -> None:
-    w, h = 111.6 * scale, 74.6 * scale
+def draw_board_carrier(c: Canvas, p: CaseProfile, x: float, y: float, scale=1.0) -> None:
+    w, h = p.cover_w * scale, p.cover_h * scale
     rect(c, x, y, w, h, fill=PART)
-    bx = x + (111.6 - 26.0) / 2 * scale
-    by = y + (74.6 - 70.0) / 2 * scale
+    bx = x + (p.cover_w - 26.0) / 2 * scale
+    by = y + (p.cover_h - 70.0) / 2 * scale
     bw, bh = 26.0 * scale, 70.0 * scale
     rect(c, bx, by, bw, bh, fill=PCB, radius=1.5 * scale)
     for y0, y1 in ((by + 9 * scale, by + 28 * scale),
@@ -247,10 +263,10 @@ def draw_board_carrier(c: Canvas, x: float, y: float, scale=1.0) -> None:
     label(c, bx + bw / 2, by - 5, "USB-C", 5.8, align="center")
 
 
-def page_pcb(c: Canvas) -> None:
-    header(c, 3, "Tang Nano 9K carrier",
+def page_pcb(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 3, "Tang Nano 9K carrier",
            "Fixed-edge insertion, two snap clips, and axial connector-load stops")
-    draw_board_carrier(c, 18, 87, 1.0)
+    draw_board_carrier(c, p, 18, 87, 1.0)
     label(c, 18, 169, "REAR COVER - INBOARD VIEW", 8)
     label(c, 18, 78, "Orange: fixed guide | Red: flex clips | Purple: axial stops", 6.5)
 
@@ -302,8 +318,8 @@ def step_box(c: Canvas, x: float, y: float, number: str, title: str,
     paragraph(c, x + 6, y + 47, details, 6.6, 7.0)
 
 
-def page_assembly(c: Canvas) -> None:
-    header(c, 4, "Assembly and service sequence",
+def page_assembly(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 4, "Assembly and service sequence",
            "Every stage ends with all installed parts positively retained")
     step_box(c, 14, 108, "1", "PANEL + LCD", (
         "Select the chassis variant matching panel thickness.",
@@ -332,8 +348,8 @@ def page_assembly(c: Canvas) -> None:
     c.showPage()
 
 
-def page_validation(c: Canvas) -> None:
-    header(c, 5, "Tolerance, material, and validation",
+def page_validation(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 5, "Tolerance, material, and validation",
            "Prototype verification is required before permanent panel machining")
 
     table(c, 14, 169, (55, 55, 62, 85), (
@@ -357,38 +373,42 @@ def page_validation(c: Canvas) -> None:
     label(c, 151, 68, "UNVERIFIED HARDWARE VALUES", 8, WARN)
     paragraph(c, 151, 59, (
         "- USB-C and HDMI shell projection and maximum assembled component height",
-        "- LCD FPC tail geometry if the module is not HT043DA-V.0",
+        f"- LCD FPC tail geometry if the module is not {p.lcd.name}",
         "- Effective snap force for the user's printer, material, and print orientation",
         "The first print is a fit prototype. Do not machine the final panel before this check.",
     ), 6.7, 7.0, WARN)
     c.showPage()
 
 
-def page_section_index(c: Canvas) -> None:
-    header(c, 6, "Exact assembly section index",
+def page_section_index(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 6, "Exact assembly section index",
            "Five cuts intentionally cross the connector, PCB clip, LCD hook, microSD aperture, and M2 bosses")
+    sections = {section.code: section for section in section_definitions(p)}
     x0, y0 = 20.0, 84.0
-    scale_drawing.draw_front_chassis(c, x0, y0)
-    board_x = x0 + (118.0 - 26.0) / 2.0
-    rect(c, board_x, y0 + 5.5, 26.0, 70.0,
+    scale_drawing.draw_front_chassis(c, p, x0, y0)
+    rect(c, x0 + p.pcb_x, y0 + p.pcb_y, 26.0, 70.0,
          stroke=MUTED, dash=(3, 2), radius=2.0)
-    ax = x0 + 53.20
-    line(c, ax, y0 - 4.0, ax, y0 + 85.0, WARN, 0.7, (5, 2))
-    label(c, ax, y0 + 87.0, "A", 7, WARN, "center", "Helvetica")
+    ax = x0 + sections["A-A"].coordinate
+    line(c, ax, y0 - 4.0, ax, y0 + p.bezel_h + 4.0, WARN, 0.7, (5, 2))
+    label(c, ax, y0 + p.bezel_h + 6.0, "A", 7, WARN, "center", "Helvetica")
     label(c, ax, y0 - 7.0, "A", 7, WARN, "center", "Helvetica")
-    for code, yy in (("C", 17.20), ("B", 25.00), ("D", 40.50), ("E", 72.90)):
-        sy = y0 + yy
-        line(c, x0 - 4.0, sy, x0 + 122.0, sy, BLUE, 0.65, (5, 2))
+    for code in ("C", "B", "D", "E"):
+        sy = y0 + sections[f"{code}-{code}"].coordinate
+        line(c, x0 - 4.0, sy, x0 + p.bezel_w + 4.0, sy, BLUE, 0.65, (5, 2))
         label(c, x0 - 6.0, sy - 1.0, code, 7, BLUE, "center", "Helvetica")
-        label(c, x0 + 124.0, sy - 1.0, code, 7, BLUE, "center", "Helvetica")
+        label(c, x0 + p.bezel_w + 6.0, sy - 1.0, code, 7, BLUE, "center", "Helvetica")
 
     label(c, 164.0, 169.0, "CUT DEFINITIONS", 9)
-    descriptions = (
-        ("A-A @ X=53.20", "connector openings + PCB end stops + FPC route"),
-        ("B-B @ Y=25.00", "PCB support shelves + fixed lip + flex clip"),
-        ("C-C @ Y=17.20", "four-hook pair plane + chassis engagement windows"),
-        ("D-D @ Y=40.50", "microSD service aperture + rear clearance"),
-        ("E-E @ Y=72.90", "two HDMI-end M2 bosses + pilot bores"),
+    details = {
+        "A-A": "connector openings + PCB end stops + FPC route",
+        "B-B": "PCB support shelves + fixed lip + flex clip",
+        "C-C": "four-hook pair plane + chassis engagement windows",
+        "D-D": "microSD service aperture + rear clearance",
+        "E-E": "two HDMI-end M2 bosses + pilot bores",
+    }
+    descriptions = tuple(
+        (f"{code} @ {section.plane.upper()}={section.coordinate:.2f}", details[code])
+        for code, section in sections.items()
     )
     for index, (name, detail) in enumerate(descriptions):
         yy = 154.0 - index * 20.0
@@ -404,22 +424,22 @@ def page_section_index(c: Canvas) -> None:
     c.showPage()
 
 
-def page_expanded_covers(c: Canvas) -> None:
-    header(c, 9, "20 mm and 30 mm expansion covers",
+def page_expanded_covers(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 9, "20 mm and 30 mm expansion covers",
            "E-E crosses both HDMI-end screw bosses while PCB and connector planes remain fixed")
     x20, y20 = 18.0, 118.0
     scale_drawing.draw_exact_section(
-        c, "E-E", x20, y20, rear_clearance=20.0
+        c, p, "E-E", x20, y20, rear_clearance=20.0
     )
-    label(c, x20 + 59.0, y20 + 48.0,
+    label(c, x20 + p.bezel_w / 2.0, y20 + 48.0,
           "20 mm REAR CLEARANCE / OVERALL DEPTH 42.00 / SCALE 1:1",
           7, align="center", font="Helvetica")
 
     x30, y30 = 18.0, 32.0
     scale_drawing.draw_exact_section(
-        c, "E-E", x30, y30, rear_clearance=30.0
+        c, p, "E-E", x30, y30, rear_clearance=30.0
     )
-    label(c, x30 + 59.0, y30 + 58.0,
+    label(c, x30 + p.bezel_w / 2.0, y30 + 58.0,
           "30 mm REAR CLEARANCE / OVERALL DEPTH 52.00 / SCALE 1:1",
           7, align="center", font="Helvetica")
 
@@ -445,14 +465,14 @@ def page_expanded_covers(c: Canvas) -> None:
     c.showPage()
 
 
-def page_m2_layout(c: Canvas) -> None:
-    header(c, 10, "Tang Nano 9K two-hole mounting specification",
+def page_m2_layout(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 10, "Tang Nano 9K two-hole mounting specification",
            "Only the HDMI-end hole pair is used; no USB-C-end mounting holes are assumed")
     x0, y0 = 23.0, 88.0
-    rect(c, x0, y0, 111.6, 74.6, fill=PART)
-    scale_drawing.draw_rear_hatches(c, x0, y0)
-    bx = x0 + (111.6 - 26.0) / 2.0
-    by = y0 + (74.6 - 70.0) / 2.0
+    rect(c, x0, y0, p.cover_w, p.cover_h, fill=PART)
+    scale_drawing.draw_rear_hatches(c, p, x0, y0)
+    bx = x0 + (p.cover_w - 26.0) / 2.0
+    by = y0 + (p.cover_h - 70.0) / 2.0
     hole_y = by + 70.0 - 2.6
     hole_xs = (bx + 2.6, bx + 26.0 - 2.6)
     for hx in hole_xs:
@@ -466,9 +486,9 @@ def page_m2_layout(c: Canvas) -> None:
     for hx in hole_xs:
         c.circle(u(hx), u(hole_y), u(1.1), stroke=1, fill=1)
     c.restoreState()
-    label(c, x0 + 55.8, 169.0, "REAR-COVER INBOARD VIEW / SCALE 1:1",
+    label(c, x0 + p.cover_w / 2.0, 169.0, "REAR-COVER INBOARD VIEW / SCALE 1:1",
           7, align="center", font="Helvetica")
-    label(c, x0 + 55.8, 79.0,
+    label(c, x0 + p.cover_w / 2.0, 79.0,
           "Blue: 6 mm bosses | Green dashed: PCB | HDMI end at top",
           6.3, align="center")
 
@@ -497,12 +517,12 @@ def page_m2_layout(c: Canvas) -> None:
     c.showPage()
 
 
-def page_sections_ab(c: Canvas) -> None:
-    header(c, 7, "Exact sections A-A and B-B",
+def page_sections_ab(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 7, "Exact sections A-A and B-B",
            "A-A resolves connectors/end stops; B-B proves that the PCB is supported and clipped")
     ax, ay = 20.0, 128.0
-    scale_drawing.draw_exact_section(c, "A-A", ax, ay)
-    label(c, ax + 40.5, ay + 33.0, "A-A  Y-Z  SCALE 1:1", 7,
+    scale_drawing.draw_exact_section(c, p, "A-A", ax, ay)
+    label(c, ax + p.bezel_h / 2.0, ay + 33.0, "A-A  Y-Z  SCALE 1:1", 7,
           align="center", font="Helvetica")
     label(c, 113.0, 161.0, "A-A passes through:", 7.2)
     paragraph(c, 113.0, 151.0, (
@@ -515,8 +535,8 @@ def page_sections_ab(c: Canvas) -> None:
     scale_drawing.section_legend(c, 213.0, 158.0)
 
     bx, by = 20.0, 48.0
-    scale_drawing.draw_exact_section(c, "B-B", bx, by)
-    label(c, bx + 59.0, by + 33.0, "B-B  X-Z  SCALE 1:1", 7,
+    scale_drawing.draw_exact_section(c, p, "B-B", bx, by)
+    label(c, bx + p.bezel_w / 2.0, by + 33.0, "B-B  X-Z  SCALE 1:1", 7,
           align="center", font="Helvetica")
     label(c, 154.0, 75.0, "PCB support condition", 7.2)
     paragraph(c, 154.0, 65.0, (
@@ -528,25 +548,28 @@ def page_sections_ab(c: Canvas) -> None:
     c.showPage()
 
 
-def page_sections_cd(c: Canvas) -> None:
-    header(c, 8, "Exact sections C-C and D-D",
+def page_sections_cd(c: Canvas, p: CaseProfile) -> None:
+    header(c, p, 8, "Exact sections C-C and D-D",
            "C-C resolves the retainer hooks; D-D resolves the intentional microSD service opening")
     cx, cy = 18.0, 130.0
-    scale_drawing.draw_exact_section(c, "C-C", cx, cy)
-    label(c, cx + 59.0, cy + 33.0, "C-C  X-Z  SCALE 1:1", 7,
+    scale_drawing.draw_exact_section(c, p, "C-C", cx, cy)
+    label(c, cx + p.bezel_w / 2.0, cy + 33.0, "C-C  X-Z  SCALE 1:1", 7,
           align="center", font="Helvetica")
     zx, zy = 164.0, 119.0
-    scale_drawing.draw_exact_section(c, "C-C", zx, zy, scale=4.0,
+    scale_drawing.draw_exact_section(c, p, "C-C", zx, zy, scale=4.0,
                                      clip_h=(0.0, 14.0), clip_z=(4.0, 15.0),
                                      show_reference_envelopes=False)
     label(c, zx + 28.0, zy + 48.0, "HOOK DETAIL 4:1", 7,
           align="center", font="Helvetica")
-    label(c, zx, zy - 7.0, "Hook head z=10.60..12.40", 5.8)
-    label(c, zx, zy - 13.0, "Window z=11.70..12.50", 5.8)
+    hook_z0 = model.retainer_assembly_z(p) + model.RETAINER_HOOK_STEP_Z0
+    hook_z1 = hook_z0 + model.RETAINER_HOOK_STEP_H * len(model.RETAINER_HOOK_PROJECTIONS)
+    window_z0, window_z1 = model.retainer_window_z(p)
+    label(c, zx, zy - 7.0, f"Hook head z={hook_z0:.2f}..{hook_z1:.2f}", 5.8)
+    label(c, zx, zy - 13.0, f"Window z={window_z0:.2f}..{window_z1:.2f}", 5.8)
 
     dx, dy = 18.0, 49.0
-    scale_drawing.draw_exact_section(c, "D-D", dx, dy)
-    label(c, dx + 59.0, dy + 33.0, "D-D  X-Z  SCALE 1:1", 7,
+    scale_drawing.draw_exact_section(c, p, "D-D", dx, dy)
+    label(c, dx + p.bezel_w / 2.0, dy + 33.0, "D-D  X-Z  SCALE 1:1", 7,
           align="center", font="Helvetica")
     label(c, 153.0, 74.0, "The missing rear-cover plate below the PCB is intentional:", 6.5)
     label(c, 153.0, 66.0, "it is the 19.00 x 46.00 mm microSD service aperture.", 6.5)
@@ -557,7 +580,10 @@ def page_sections_cd(c: Canvas) -> None:
     c.showPage()
 
 
-def create_pdf(output: Path) -> None:
+OUTPUT_NAME = "tang-nano-9k-panel-case-retention-design.pdf"
+
+
+def create_pdf(output: Path, p: CaseProfile) -> None:
     pdfmetrics.registerFont(TTFont(
         "DejaVu", str(dejavu_sans())))
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -570,17 +596,21 @@ def create_pdf(output: Path) -> None:
     for page in (page_overview, page_lcd, page_pcb, page_assembly,
                  page_validation, page_section_index, page_sections_ab,
                  page_sections_cd, page_expanded_covers, page_m2_layout):
-        page(c)
+        page(c, p)
     c.save()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path,
-                        default=Path("output/pdf/tang-nano-9k-panel-case-retention-design.pdf"))
+    parser.add_argument("--output-dir", type=Path, default=Path("output"),
+                        help="root directory; one sub-directory per profile")
+    parser.add_argument("--profile", action="append", choices=sorted(PROFILES),
+                        help="profile to draw; repeatable, default: all")
     args = parser.parse_args()
-    create_pdf(args.output)
-    print(args.output)
+    for key in args.profile or PROFILES:
+        output = args.output_dir / key / "pdf" / OUTPUT_NAME
+        create_pdf(output, get_profile(key))
+        print(output)
 
 
 if __name__ == "__main__":

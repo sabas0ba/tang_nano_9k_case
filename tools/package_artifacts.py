@@ -5,32 +5,38 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import sys
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools import generate_stl  # noqa: E402
+from tools.profiles import PROFILES  # noqa: E402
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE_NAME = "tang-nano-9k-panel-case-r4.zip"
 ARCHIVE_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
-ARTIFACT_PATHS = (
+DOCUMENT_PATHS = (
     "README.md",
     "docs/development.md",
     "docs/retention-design.md",
-    "build/front_chassis_panel_1p5mm.stl",
-    "build/front_chassis_panel_2p0mm.stl",
-    "build/front_chassis_panel_3p0mm.stl",
-    "build/lcd_retainer.stl",
-    "build/rear_cover.stl",
-    "build/rear_cover_clearance_20mm.stl",
-    "build/rear_cover_clearance_30mm.stl",
-    "build/assembly_reference_clearance_20mm.stl",
-    "build/assembly_reference_clearance_30mm.stl",
-    "output/images/assembly_render.png",
-    "output/images/exploded_render.png",
-    "output/images/orthographic_three_view.png",
-    "output/pdf/tang-nano-9k-panel-case-drawing.pdf",
-    "output/pdf/tang-nano-9k-panel-case-1to1.pdf",
-    "output/pdf/tang-nano-9k-panel-case-retention-design.pdf",
+)
+PROFILE_ARTIFACT_NAMES = (
+    *(f"build/{{profile}}/{name}" for name in generate_stl.PRINTABLE_STL_NAMES),
+    *(f"build/{{profile}}/{name}" for name in generate_stl.REFERENCE_STL_NAMES),
+    "output/{profile}/images/assembly_render.png",
+    "output/{profile}/images/exploded_render.png",
+    "output/{profile}/images/orthographic_three_view.png",
+    "output/{profile}/pdf/tang-nano-9k-panel-case-drawing.pdf",
+    "output/{profile}/pdf/tang-nano-9k-panel-case-1to1.pdf",
+    "output/{profile}/pdf/tang-nano-9k-panel-case-retention-design.pdf",
+)
+ARTIFACT_PATHS = DOCUMENT_PATHS + tuple(
+    template.format(profile=profile)
+    for profile in PROFILES
+    for template in PROFILE_ARTIFACT_NAMES
 )
 
 

@@ -32,44 +32,21 @@ from reportlab.platypus import Table, TableStyle
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools import generate_stl as model
+from tools.create_scale_drawing import dim_text
 from tools.font_paths import dejavu_sans
+from tools.profiles import PROFILES, CaseProfile, get_profile
 
 
-BEZEL_W = 118.0
-BEZEL_H = 81.0
-BEZEL_T = 3.0
-BODY_W = 112.0
-BODY_H = 75.0
-BODY_D = 27.0
-BODY_X = 3.0
-BODY_Y = 3.0
-WALL = 2.0
-
-LCD_W = 105.5
-LCD_H = 67.15
-LCD_T = 2.9
-LCD_ACTIVE_W = 95.04
-LCD_ACTIVE_H = 53.856
-LCD_ACTIVE_X = 5.18
-LCD_ACTIVE_Y = 4.04
-
-PCB_W = 26.0
-PCB_H = 70.0
-PCB_T = 1.6
-
-WINDOW_MARGIN = 0.3
-WINDOW_W = LCD_ACTIVE_W + WINDOW_MARGIN * 2
-WINDOW_H = LCD_ACTIVE_H + WINDOW_MARGIN * 2
-LCD_X = BODY_X + (BODY_W - LCD_W) / 2
-LCD_Y = BODY_Y + (BODY_H - LCD_H) / 2
-WINDOW_X = LCD_X + LCD_ACTIVE_X - WINDOW_MARGIN
-WINDOW_Y = LCD_Y + LCD_ACTIVE_Y - WINDOW_MARGIN
-
-PANEL_CUTOUT_W = 112.6
-PANEL_CUTOUT_H = 75.6
+BEZEL_T = model.BEZEL_T
+BODY_D = model.BODY_D
+WALL = model.WALL
+PCB_W = model.PCB_W
+PCB_H = model.PCB_H
+PCB_T = model.PCB_T
 # The rear cover is recessed into the 27 mm chassis envelope.  Its 2 mm plate
 # occupies z=25..27 after assembly; it does not add another 2 mm externally.
-TOTAL_DEPTH = 27.0
+TOTAL_DEPTH = BODY_D
 
 
 @dataclass
@@ -114,21 +91,22 @@ def translate(mesh: np.ndarray, x=0.0, y=0.0, z=0.0) -> np.ndarray:
     return mesh + np.array([x, y, z])
 
 
-def assembled_rear_cover(mesh: np.ndarray, extra_z=0.0) -> np.ndarray:
+def assembled_rear_cover(p: CaseProfile, mesh: np.ndarray, extra_z=0.0) -> np.ndarray:
     result = mesh.copy()
-    result[:, :, 0] += BODY_X + 0.2
-    result[:, :, 1] += BODY_Y + 0.2
+    result[:, :, 0] += p.cover_x
+    result[:, :, 1] += p.cover_y
     result[:, :, 2] = BODY_D - result[:, :, 2] + extra_z
     return result
 
 
-def lcd_proxy(z0=BEZEL_T) -> np.ndarray:
-    return box_mesh(LCD_X, LCD_Y, z0, LCD_X + LCD_W, LCD_Y + LCD_H, z0 + LCD_T)
+def lcd_proxy(p: CaseProfile, z0=BEZEL_T) -> np.ndarray:
+    lcd = p.lcd
+    return box_mesh(p.lcd_x, p.lcd_y, z0, p.lcd_x + lcd.width,
+                    p.lcd_y + lcd.height, z0 + lcd.thickness)
 
 
-def pcb_proxy(z0=BODY_D - 8.6) -> np.ndarray:
-    x0 = BEZEL_W / 2 - PCB_W / 2
-    y0 = BODY_Y + WALL + 0.5
+def pcb_proxy(p: CaseProfile, z0=BODY_D - 8.6) -> np.ndarray:
+    x0, y0 = p.pcb_x, p.pcb_y
     return box_mesh(x0, y0, z0, x0 + PCB_W, y0 + PCB_H, z0 + PCB_T)
 
 
@@ -196,7 +174,7 @@ def setup_drawing_axis(ax, title):
     ax.axis("off")
 
 
-def create_three_view(output: Path) -> None:
+def create_three_view(output: Path, p: CaseProfile) -> None:
     fig = plt.figure(figsize=(16, 10), dpi=220, facecolor="white")
     grid = fig.add_gridspec(2, 2, height_ratios=(1.25, 0.75), hspace=0.28, wspace=0.18)
     front = fig.add_subplot(grid[0, :])
@@ -205,64 +183,70 @@ def create_three_view(output: Path) -> None:
 
     # Front view.
     setup_drawing_axis(front, "FRONT VIEW")
-    front.add_patch(Rectangle((0, 0), BEZEL_W, BEZEL_H, fill=False, lw=2.0, color="#263238"))
-    front.add_patch(Rectangle((WINDOW_X, WINDOW_Y), WINDOW_W, WINDOW_H,
+    bezel_w, bezel_h = p.bezel_w, p.bezel_h
+    window_x, window_y = p.window_x, p.window_y
+    window_w, window_h = p.window_w, p.window_h
+    front.add_patch(Rectangle((0, 0), bezel_w, bezel_h, fill=False, lw=2.0, color="#263238"))
+    front.add_patch(Rectangle((window_x, window_y), window_w, window_h,
                               fill=False, lw=1.8, color="#263238"))
-    cut_x = (BEZEL_W - PANEL_CUTOUT_W) / 2
-    cut_y = (BEZEL_H - PANEL_CUTOUT_H) / 2
-    front.add_patch(Rectangle((cut_x, cut_y), PANEL_CUTOUT_W, PANEL_CUTOUT_H,
+    cut_x = (bezel_w - p.panel_cutout_w) / 2
+    cut_y = (bezel_h - p.panel_cutout_h) / 2
+    front.add_patch(Rectangle((cut_x, cut_y), p.panel_cutout_w, p.panel_cutout_h,
                               fill=False, lw=1.0, ls="--", color="#78909c"))
-    dimension_h(front, 0, BEZEL_W, -9, 0, "118.0")
-    dimension_v(front, 0, BEZEL_H, -11, 0, "81.0")
-    dimension_h(front, WINDOW_X, WINDOW_X + WINDOW_W, WINDOW_Y - 5, WINDOW_Y,
-                f"{WINDOW_W:.2f}")
-    dimension_v(front, WINDOW_Y, WINDOW_Y + WINDOW_H, WINDOW_X - 5, WINDOW_X,
-                f"{WINDOW_H:.2f}")
-    front.text(BEZEL_W + 3, BEZEL_H - 2,
-               f"Dashed: panel cutout\n{PANEL_CUTOUT_W:.1f} x {PANEL_CUTOUT_H:.1f}",
+    dimension_h(front, 0, bezel_w, -9, 0, f"{bezel_w:.1f}")
+    dimension_v(front, 0, bezel_h, -11, 0, f"{bezel_h:.1f}")
+    dimension_h(front, window_x, window_x + window_w, window_y - 5, window_y,
+                f"{window_w:.2f}")
+    dimension_v(front, window_y, window_y + window_h, window_x - 5, window_x,
+                f"{window_h:.2f}")
+    front.text(bezel_w + 3, bezel_h - 2,
+               f"Dashed: panel cutout\n{p.panel_cutout_w:.1f} x {p.panel_cutout_h:.1f}",
                va="top", fontsize=8, color="#546e7a")
-    front.set_xlim(-16, BEZEL_W + 28)
-    front.set_ylim(-13, BEZEL_H + 5)
+    front.set_xlim(-16, bezel_w + 28)
+    front.set_ylim(-13, bezel_h + 5)
 
     # Top view: X-Z.
     setup_drawing_axis(top, "TOP VIEW")
-    top.add_patch(Rectangle((0, 0), BEZEL_W, BEZEL_T, fill=False, lw=2.0, color="#263238"))
-    top.add_patch(Rectangle((BODY_X, BEZEL_T), BODY_W, BODY_D - BEZEL_T,
+    hdmi = p.hdmi_opening
+    top.add_patch(Rectangle((0, 0), bezel_w, BEZEL_T, fill=False, lw=2.0, color="#263238"))
+    top.add_patch(Rectangle((p.body_x, BEZEL_T), p.body_w, BODY_D - BEZEL_T,
                             fill=False, lw=1.7, color="#263238"))
-    top.add_patch(Rectangle((BODY_X + 0.2, BODY_D - 2.0), BODY_W - 0.4, 2.0,
+    top.add_patch(Rectangle((p.cover_x, BODY_D - 2.0), p.cover_w, 2.0,
                             fill=False, lw=1.7, color="#263238"))
     # HDMI opening on the top wall.
-    top.add_patch(Rectangle((BEZEL_W / 2 - 8.2, 14.6), 16.4, 8.8,
+    top.add_patch(Rectangle((bezel_w / 2 - hdmi.half_w, hdmi.z0), hdmi.width, hdmi.height,
                             fill=False, lw=1.2, color="#d84315"))
-    dimension_h(top, 0, BEZEL_W, -8, 0, "118.0")
+    dimension_h(top, 0, bezel_w, -8, 0, f"{bezel_w:.1f}")
     dimension_v(top, 0, TOTAL_DEPTH, -10, 0, "29.0")
-    top.text(BEZEL_W / 2, 24.5, "HDMI opening", ha="center", color="#d84315", fontsize=8)
-    top.set_xlim(-15, BEZEL_W + 5)
+    top.text(bezel_w / 2, hdmi.z1 + 1.1, "HDMI opening", ha="center", color="#d84315", fontsize=8)
+    top.set_xlim(-15, bezel_w + 5)
     top.set_ylim(-11, TOTAL_DEPTH + 5)
 
     # Right side view: Z-Y.
     setup_drawing_axis(side, "RIGHT SIDE VIEW")
-    side.add_patch(Rectangle((0, 0), BEZEL_T, BEZEL_H, fill=False, lw=2.0, color="#263238"))
-    side.add_patch(Rectangle((BEZEL_T, BODY_Y), BODY_D - BEZEL_T, BODY_H,
+    side.add_patch(Rectangle((0, 0), BEZEL_T, bezel_h, fill=False, lw=2.0, color="#263238"))
+    side.add_patch(Rectangle((BEZEL_T, p.body_y), BODY_D - BEZEL_T, p.body_h,
                              fill=False, lw=1.7, color="#263238"))
-    side.add_patch(Rectangle((BODY_D - 2.0, BODY_Y + 0.2), 2.0, BODY_H - 0.4,
+    side.add_patch(Rectangle((BODY_D - 2.0, p.cover_y), 2.0, p.cover_h,
                              fill=False, lw=1.7, color="#263238"))
     dimension_h(side, 0, TOTAL_DEPTH, -9, 0, "29.0")
-    dimension_v(side, 0, BEZEL_H, -11, 0, "81.0")
+    dimension_v(side, 0, bezel_h, -11, 0, f"{bezel_h:.1f}")
     side.set_xlim(-16, TOTAL_DEPTH + 6)
-    side.set_ylim(-12, BEZEL_H + 5)
+    side.set_ylim(-12, bezel_h + 5)
 
-    fig.suptitle("Tang Nano 9K + 4.3-inch LCD Panel Case - Orthographic Drawing",
+    fig.suptitle(f"Tang Nano 9K + {p.title} LCD Panel Case - Orthographic Drawing",
                  fontsize=17, fontweight="bold", color="#263238", y=0.98)
     fig.text(0.5, 0.012,
-             "Units: mm | Projection: orthographic | Scale: NTS | Reference panel: 4.3-inch 480 x 272",
+             "Units: mm | Projection: orthographic | Scale: NTS | "
+             f"Reference panel: {p.lcd.description.replace(' RGB', '')}",
              ha="center", fontsize=9, color="#546e7a")
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
-def create_pdf(pdf_path: Path, three_view: Path, assembly: Path, exploded: Path) -> None:
+def create_pdf(pdf_path: Path, p: CaseProfile, three_view: Path, assembly: Path,
+               exploded: Path) -> None:
     font_path = dejavu_sans()
     pdfmetrics.registerFont(TTFont("DejaVu", str(font_path)))
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,10 +279,13 @@ def create_pdf(pdf_path: Path, three_view: Path, assembly: Path, exploded: Path)
     table = Table(
         [
             ["Item", "Nominal value"],
-            ["LCD module", "105.50 x 67.15 x 2.90 mm"],
+            ["LCD module", f"{dim_text(p.lcd.width)} x {dim_text(p.lcd.height)}"
+                           f" x {dim_text(p.lcd.thickness)} mm"],
             ["PCB", "70.00 x 26.00 x 1.60 mm"],
-            ["Front bezel", "118.00 x 81.00 mm"],
-            ["Recommended panel cutout", "112.60 x 75.60 mm; trim after test fit"],
+            ["Front bezel", f"{dim_text(p.bezel_w)} x {dim_text(p.bezel_h)} mm"],
+            ["Recommended panel cutout",
+             f"{dim_text(p.panel_cutout_w)} x {dim_text(p.panel_cutout_h)} mm;"
+             " trim after test fit"],
             ["Overall depth", "27.00 mm; rear cover is recessed"],
             ["Panel clip variants", "1.5 / 2.0 / 3.0 mm panel thickness"],
         ],
@@ -320,52 +307,48 @@ def create_pdf(pdf_path: Path, three_view: Path, assembly: Path, exploded: Path)
     canvas.setFont("DejaVu", 8)
     canvas.setFillColor(colors.HexColor("#455a64"))
     canvas.drawString(12 * mm, 25 * mm,
-                      "Design basis: Sipeed Tang Nano 9K and HT043DA-V.0 4.3-inch LCD.")
+                      f"Design basis: Sipeed Tang Nano 9K and {p.lcd.name} {p.title} LCD.")
     canvas.drawString(12 * mm, 19 * mm,
                       "Verify connector height and clip fit on physical hardware before final panel machining.")
     canvas.save()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--stl-dir", type=Path, default=Path("build"))
-    parser.add_argument("--output-dir", type=Path, default=Path("output"))
-    args = parser.parse_args()
+def create_profile_visuals(stl_dir: Path, output_dir: Path, p: CaseProfile) -> list[Path]:
+    front = read_binary_stl(stl_dir / "front_chassis_panel_2p0mm.stl")
+    retainer = read_binary_stl(stl_dir / "lcd_retainer.stl")
+    cover = read_binary_stl(stl_dir / "rear_cover.stl")
+    retainer_closed = translate(retainer, p.retainer_x, p.retainer_y,
+                                model.retainer_assembly_z(p))
+    cover_closed = assembled_rear_cover(p, cover)
 
-    front = read_binary_stl(args.stl_dir / "front_chassis_panel_2p0mm.stl")
-    retainer = read_binary_stl(args.stl_dir / "lcd_retainer.stl")
-    cover = read_binary_stl(args.stl_dir / "rear_cover.stl")
-    retainer_closed = translate(retainer, BODY_X + WALL + 0.2, BODY_Y + WALL + 0.2,
-                                BEZEL_T + LCD_T)
-    cover_closed = assembled_rear_cover(cover)
-
-    image_dir = args.output_dir / "images"
-    pdf_dir = args.output_dir / "pdf"
+    image_dir = output_dir / "images"
+    pdf_dir = output_dir / "pdf"
     assembly_path = image_dir / "assembly_render.png"
     exploded_path = image_dir / "exploded_render.png"
     three_view_path = image_dir / "orthographic_three_view.png"
     pdf_path = pdf_dir / "tang-nano-9k-panel-case-drawing.pdf"
+    lcd_label = f"{p.title} LCD"
 
     render_scene(
         [
             SceneItem(front, "#90a4ae", 0.23, "Front chassis"),
-            SceneItem(lcd_proxy(), "#29b6f6", 0.82, "4.3-inch LCD"),
+            SceneItem(lcd_proxy(p), "#29b6f6", 0.82, lcd_label),
             SceneItem(retainer_closed, "#ffb74d", 0.82, "LCD retainer"),
-            SceneItem(pcb_proxy(), "#43a047", 0.90, "Tang Nano 9K"),
+            SceneItem(pcb_proxy(p), "#43a047", 0.90, "Tang Nano 9K"),
             SceneItem(cover_closed, "#607d8b", 0.28, "Rear cover"),
         ],
         assembly_path,
         "Assembled cutaway render",
     )
 
-    exploded_retainer = translate(retainer, BODY_X + WALL + 0.2, BODY_Y + WALL + 0.2, 43.0)
-    exploded_lcd = lcd_proxy(34.0)
-    exploded_pcb = pcb_proxy(52.0)
-    exploded_cover = assembled_rear_cover(cover, extra_z=53.0)
+    exploded_retainer = translate(retainer, p.retainer_x, p.retainer_y, 43.0)
+    exploded_lcd = lcd_proxy(p, 34.0)
+    exploded_pcb = pcb_proxy(p, 52.0)
+    exploded_cover = assembled_rear_cover(p, cover, extra_z=53.0)
     render_scene(
         [
             SceneItem(front, "#90a4ae", 0.42, "Front chassis"),
-            SceneItem(exploded_lcd, "#29b6f6", 0.88, "4.3-inch LCD"),
+            SceneItem(exploded_lcd, "#29b6f6", 0.88, lcd_label),
             SceneItem(exploded_retainer, "#ffb74d", 0.90, "LCD retainer"),
             SceneItem(exploded_pcb, "#43a047", 0.92, "Tang Nano 9K"),
             SceneItem(exploded_cover, "#607d8b", 0.50, "Rear cover"),
@@ -375,11 +358,25 @@ def main() -> None:
         elev=24,
         azim=-55,
     )
-    create_three_view(three_view_path)
-    create_pdf(pdf_path, three_view_path, assembly_path, exploded_path)
+    create_three_view(three_view_path, p)
+    create_pdf(pdf_path, p, three_view_path, assembly_path, exploded_path)
+    return [assembly_path, exploded_path, three_view_path, pdf_path]
 
-    for path in (assembly_path, exploded_path, three_view_path, pdf_path):
-        print(path)
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--stl-dir", type=Path, default=Path("build"),
+                        help="root directory with one sub-directory per profile")
+    parser.add_argument("--output-dir", type=Path, default=Path("output"),
+                        help="root directory; one sub-directory per profile")
+    parser.add_argument("--profile", action="append", choices=sorted(PROFILES),
+                        help="profile to render; repeatable, default: all")
+    args = parser.parse_args()
+    for key in args.profile or PROFILES:
+        paths = create_profile_visuals(args.stl_dir / key, args.output_dir / key,
+                                       get_profile(key))
+        for path in paths:
+            print(path)
 
 
 if __name__ == "__main__":

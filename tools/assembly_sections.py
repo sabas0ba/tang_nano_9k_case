@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Literal
 
 from tools import generate_stl as model
+from tools.profiles import CaseProfile
 
 
 Plane = Literal["x", "y"]
@@ -28,28 +29,35 @@ class SectionDefinition:
     purpose: str
 
 
-SECTION_DEFINITIONS = (
-    SectionDefinition(
-        "A-A", "x", 53.20, "LONGITUDINAL Y-Z SECTION",
-        "USB-C / HDMI, PCB end stop, LCD, FPC route and rear cover",
-    ),
-    SectionDefinition(
-        "B-B", "y", 25.00, "PCB RETENTION X-Z SECTION",
-        "fixed lip, support shelf, PCB and flexible clip",
-    ),
-    SectionDefinition(
-        "C-C", "y", 17.20, "LCD HOOK X-Z SECTION",
-        "retainer cantilevers, stepped heads and chassis windows",
-    ),
-    SectionDefinition(
-        "D-D", "y", 40.50, "MICROSD SERVICE X-Z SECTION",
-        "PCB underside, service aperture and rear clearance",
-    ),
-    SectionDefinition(
-        "E-E", "y", 72.90, "HDMI-END M2 BOSS X-Z SECTION",
-        "two HDMI-end mounting bosses, pilot bores, PCB and deep rear shell",
-    ),
-)
+def section_definitions(profile: CaseProfile) -> tuple[SectionDefinition, ...]:
+    """Return cutting planes positioned on the profile's actual features."""
+    retainer_hook_y = profile.retainer_y + profile.retainer_hook_centres[0]
+    return (
+        SectionDefinition(
+            "A-A", "x", profile.pcb_x + profile.section_a_offset,
+            "LONGITUDINAL Y-Z SECTION",
+            "USB-C / HDMI, PCB end stop, LCD, FPC route and rear cover",
+        ),
+        SectionDefinition(
+            "B-B", "y", profile.pcb_y + 19.50, "PCB RETENTION X-Z SECTION",
+            "fixed lip, support shelf, PCB and flexible clip",
+        ),
+        SectionDefinition(
+            "C-C", "y", retainer_hook_y, "LCD HOOK X-Z SECTION",
+            "retainer cantilevers, stepped heads and chassis windows",
+        ),
+        SectionDefinition(
+            "D-D", "y", profile.pcb_y + model.PCB_H / 2.0,
+            "MICROSD SERVICE X-Z SECTION",
+            "PCB underside, service aperture and rear clearance",
+        ),
+        SectionDefinition(
+            "E-E", "y",
+            profile.pcb_y + model.PCB_H - model.PCB_MOUNT_HOLE_EDGE_OFFSET,
+            "HDMI-END M2 BOSS X-Z SECTION",
+            "two HDMI-end mounting bosses, pilot bores, PCB and deep rear shell",
+        ),
+    )
 
 
 def _box_transform(
@@ -84,60 +92,34 @@ def transformed(
     return result
 
 
-def box_solid(name: str, coords: tuple[float, float, float, float, float, float]) -> model.RectilinearSolid:
-    solid = model.RectilinearSolid(name)
-    solid.add(*coords)
-    return solid
-
-
 def assembly_parts(
+    profile: CaseProfile,
     panel_t: float = 2.0,
     rear_clearance: float = model.STANDARD_REAR_CLEARANCE,
 ) -> tuple[SectionPart, ...]:
     """Return all verified mechanical solids in assembled global coordinates."""
+    retainer_z = model.retainer_assembly_z(profile)
     retainer = transformed(
-        model.lcd_retainer(),
+        model.lcd_retainer(profile),
         "assembled-lcd-retainer",
-        dx=model.BODY_X + model.WALL + 0.20,
-        dy=model.BODY_Y + model.WALL + 0.20,
-        z_map=lambda value: model.RETAINER_ASSEMBLY_Z + value,
+        dx=profile.retainer_x,
+        dy=profile.retainer_y,
+        z_map=lambda value: retainer_z + value,
     )
-    cover_offset = (model.BEZEL_W - 111.60) / 2.0
     overall_depth = 22.0 + rear_clearance
     cover = transformed(
-        model.rear_cover(rear_clearance),
+        model.rear_cover(profile, rear_clearance),
         "assembled-rear-cover",
-        dx=cover_offset,
-        dy=(model.BEZEL_H - 74.60) / 2.0,
+        dx=profile.cover_x,
+        dy=profile.cover_y,
         z_map=lambda value: overall_depth - value,
     )
-    lcd_x = model.BODY_X + (model.BODY_W - model.LCD_W) / 2.0
-    lcd_y = model.BODY_Y + (model.BODY_H - model.LCD_H) / 2.0
-    lcd = box_solid(
-        "lcd-reference-envelope",
-        (lcd_x, lcd_y, model.BEZEL_T, lcd_x + model.LCD_W,
-         lcd_y + model.LCD_H, model.BEZEL_T + model.LCD_T),
-    )
-    pcb_x = (model.BEZEL_W - model.PCB_W) / 2.0
-    pcb_y = model.BODY_Y + model.WALL + 0.50
-    pcb = box_solid(
-        "tang-nano-9k-pcb",
-        (pcb_x, pcb_y, 18.40, pcb_x + model.PCB_W,
-         pcb_y + model.PCB_H, 18.40 + model.PCB_T),
-    )
-    hdmi_hole_y = pcb_y + model.PCB_H - model.PCB_MOUNT_HOLE_EDGE_OFFSET
-    hole_half = model.PCB_MOUNT_HOLE_D / 2.0
-    for hdmi_hole_x in (
-        pcb_x + model.PCB_MOUNT_HOLE_EDGE_OFFSET,
-        pcb_x + model.PCB_W - model.PCB_MOUNT_HOLE_EDGE_OFFSET,
-    ):
-        pcb.cut(hdmi_hole_x - hole_half, hdmi_hole_y - hole_half, 18.30,
-                hdmi_hole_x + hole_half, hdmi_hole_y + hole_half, 20.10)
     return (
-        SectionPart("Front chassis", model.front_chassis(panel_t), "chassis"),
-        SectionPart("LCD reference body", lcd, "lcd"),
+        SectionPart("Front chassis", model.front_chassis(profile, panel_t),
+                    "chassis"),
+        SectionPart("LCD reference body", model.lcd_proxy(profile), "lcd"),
         SectionPart("LCD retainer", retainer, "retainer"),
-        SectionPart("Tang Nano 9K PCB", pcb, "pcb"),
+        SectionPart("Tang Nano 9K PCB", model.pcb_proxy(profile), "pcb"),
         SectionPart("Rear cover + carrier", cover, "cover"),
     )
 
@@ -175,16 +157,18 @@ def section_cells(
     return result
 
 
-def section_by_code(code: str) -> SectionDefinition:
-    return next(section for section in SECTION_DEFINITIONS if section.code == code)
+def section_by_code(profile: CaseProfile, code: str) -> SectionDefinition:
+    return next(
+        section for section in section_definitions(profile)
+        if section.code == code
+    )
 
 
 def mechanical_cells(
     section: SectionDefinition,
-    parts: Iterable[SectionPart] | None = None,
+    parts: Iterable[SectionPart],
 ) -> list[tuple[SectionPart, list[tuple[float, float, float, float]]]]:
-    actual_parts = tuple(parts or assembly_parts())
     return [
         (part, section_cells(part.solid, section.plane, section.coordinate))
-        for part in actual_parts
+        for part in parts
     ]
