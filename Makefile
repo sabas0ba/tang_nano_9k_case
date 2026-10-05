@@ -17,10 +17,10 @@ visuals: stl
 	python3 tools/create_visuals.py --stl-dir build --output-dir output
 
 scale-drawing:
-	python3 tools/create_scale_drawing.py --output output/pdf/tang-nano-9k-panel-case-1to1.pdf
+	python3 tools/create_scale_drawing.py --output-dir output
 
 design-docs:
-	python3 tools/create_retention_design.py --output output/pdf/tang-nano-9k-panel-case-retention-design.pdf
+	python3 tools/create_retention_design.py --output-dir output
 
 package: all
 	python3 tools/package_artifacts.py --output-dir dist
@@ -35,6 +35,6 @@ container-check: container-build
 	$(CONTAINER_ENGINE) run --rm --network none -v "$(CURDIR):/project" -w /project $(CONTAINER_IMAGE) make check
 
 clean:
-	rm -f build/*.stl
+	rm -rf build
 	rm -rf output
 	rm -rf dist

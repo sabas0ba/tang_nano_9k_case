@@ -46,7 +46,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           assets=(
-            "dist/tang-nano-9k-panel-case-r4.zip"
+            "dist/tang-nano-9k-panel-case-r5.zip"
             "dist/SHA256SUMS"
           )
 
